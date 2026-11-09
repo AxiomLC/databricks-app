@@ -1,0 +1,26 @@
+# Databricks AppKit build output
+ui/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Env / secrets — never commit real keys
+.env
+.env.*
+!*.env.example
+
+# Node
+node_modules/
+
+# Local data / scratch
+data/
+*.parquet
+*.jsonl
+!schemas/**/*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
