@@ -24,6 +24,10 @@ data/
 # Written at runtime by the n8n 'Write pillars.json' node
 pillars.json
 
+# Local scratch / workflow exports
+archive/
+n8n/
+
 # OS / editor
 .DS_Store
 Thumbs.db
