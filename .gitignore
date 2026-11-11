@@ -21,6 +21,9 @@ data/
 *.jsonl
 !schemas/**/*.json
 
+# Written at runtime by the n8n 'Write pillars.json' node
+pillars.json
+
 # OS / editor
 .DS_Store
 Thumbs.db
