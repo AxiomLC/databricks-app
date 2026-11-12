@@ -125,17 +125,33 @@ All five daily legs converge: `Validate ×5 → Merge(append, 5 inputs) → Gate
 
 Code node, 5 items. Only place to change queries.
 
+**Pillar set locked 2026-11-12** (see §5.9). The `keyword` / `hf` / `pypi` values
+below are the *current* runtime values and still reflect the old categories —
+they are scheduled for rewrite. The `pillar` ids are the new ones.
+
 ```js
-{ pillar: 'graph-db',       keyword: 'graph database', hf: 'graph',     pypi: ['neo4j','kuzu','falkordb','memgraph','gremlinpython'] },
-{ pillar: 'lakehouse',      keyword: 'lakehouse',      hf: 'lakehouse', pypi: ['deltalake','pyiceberg','duckdb','lance'] },
-{ pillar: 'ai-memory',      keyword: 'agent memory',   hf: 'memory',    pypi: ['letta','mem0ai','zep-python','langmem'] },
-{ pillar: 'hybrid-ram',     keyword: 'vector index',   hf: 'vector',    pypi: ['faiss-cpu','usearch','hnswlib','annoy'] },
-{ pillar: 'object-storage', keyword: 'object storage', hf: 'storage',   pypi: ['boto3','minio','pyarrow','obstore'] },
+{ pillar: 'self-hosted-vs-saas', keyword: 'self-hosted AI',  hf: 'gguf',      pypi: ['ollama','llama-cpp-python','open-webui','langchain'] },
+{ pillar: 'temporal-memory',     keyword: 'agent memory',   hf: 'memory',    pypi: ['mem0ai','zep-python','langmem','graphiti-core'] },
+{ pillar: 'retrieval-engines',   keyword: 'approximate nearest neighbor', hf: 'graph', pypi: ['neo4j','kuzu','falkordb','memgraph','gremlinpython','faiss-cpu','usearch','hnswlib','annoy','qdrant-client','lancedb'] },
+{ pillar: 'data-persistence',    keyword: 'object storage', hf: 'storage',   pypi: ['obstore','minio','s3fs','fsspec','cloudpathlib','smart-open'] },
+{ pillar: 'stack-structure',     keyword: 'lakehouse',      hf: 'lakehouse', pypi: ['deltalake','pyiceberg','duckdb','pyarrow','openlineage-python','databricks-sdk'] },
 ```
+
+Notes on the rewrite:
+
+- `boto3` / `pyarrow` were **removed** from `data-persistence` — downloaded by
+  everything, their noise floor swamps `obstore`. `pyarrow` moved to
+  `stack-structure` where it is on-pillar.
+- `letta` dropped from `temporal-memory` (superseded by `mem0ai` / `graphiti-core`).
+- `retrieval-engines` merges the old `graph-db` + `hybrid-ram` lists, because
+  graph / vector / keyword / columnar are now *contenders inside one arena*
+  rather than separate pillars.
+- `self-hosted-vs-saas` is the only pillar whose cloud side is not directly
+  observable. See §5.9 for the measurement caveat.
 
 | Field | Consumed by | Constraint |
 |---|---|---|
-| `keyword` | arXiv `all:`, GitHub `q=`, OpenAlex `default.search:` | free text |
+| `keyword` | arXiv `all:"…"`, GitHub `q=`, OpenAlex `title.search:"…"` | free text; quoted as a phrase in arXiv and OpenAlex |
 | `hf` | Hugging Face `search=` | **single word only** — HF ignores multi-word phrases |
 | `pypi` | `Flatten PyPI Packages` → one item per package | array |
 
@@ -373,6 +389,94 @@ A Code node has no filesystem access, so it cannot read the JSON itself — the
 write direction is the only way to share without duplicating the list.
 
 `pillars.json` is gitignored (runtime artifact).
+
+### 5.8 OpenAlex query shape
+
+`OpenAlex HTTP` uses `filter=title.search:"<keyword>"` — the keyword is wrapped
+in literal quotes before `encodeURIComponent`, so OpenAlex matches it as an
+exact phrase in the title only.
+
+This replaced `default.search`, which is a noisy alias for `fulltext.search`.
+Measured on `graph database`: `default.search` + `cited_by_count:desc` returned
+ImageNet, BLAST and LeNet; `title.search` quoted returned Freebase, "Survey of
+graph database models" and "Query languages for graph databases".
+
+`hybrid-ram` was also changed from `vector index` (79 hits, mostly GIS and
+signal-processing) to `approximate nearest neighbor` (729 hits, top-10 all
+on-pillar: HNSW, FAISS, LSH, Annoy).
+
+### 5.9 Pillars — locked 2026-11-12
+
+Research response landed (`archive/pillars_research_11_12_2026.md`,
+`archive/pillars.arenas.json`). The pillars are now **competitive arenas**:
+each asks which approach is gaining adoption share, not which keyword is gaining
+mentions. Every scored entity gets **one primary arena**; cross-arena
+dependencies are graph edges, not duplicate score entries.
+
+| # | Pillar | id | The contest |
+|---|---|---|---|
+| 1 | Self-hosted AI Apps vs SaaS AI Apps | `self-hosted-vs-saas` | run the orchestration yourself vs rent it |
+| 2 | Temporal Memory & Context | `temporal-memory` | evolving state vs flat recall |
+| 3 | Retrieval Strategy | `retrieval-engines` | joins · hops · keyword · vector · columnar |
+| 4 | Where Durable State Lives | `data-persistence` | local disk vs object store vs managed cloud |
+| 5 | Open Format vs Integrated Platform | `stack-structure` | who owns the stack |
+
+**Why the old set was replaced:**
+
+| Old pillar | Problem | Resolution |
+|---|---|---|
+| `hybrid-ram` | Conflated RAM-resident graph with vector search — two different axes | Split: storage medium → `data-persistence`, retrieval method → `retrieval-engines` |
+| `lakehouse` | Overlapped `object-storage` — both claimed table formats and cloud persistence | Merged into `stack-structure` (ownership), storage moved to `data-persistence` |
+| `graph-db` | Was a *category*, not a contest | Absorbed into `retrieval-engines` as one contender among five |
+| `ai-memory` | Fine, but named as a category | Renamed `temporal-memory`, framed as evolving-state vs flat-recall |
+
+**Two axes, not one.** The old set mixed *data model* (how state is shaped and
+queried) with *deployment* (where the bytes physically live). They are
+orthogonal — Neo4j is native-graph + local-disk, HydraDB is native-graph +
+object-store, Postgres-with-edge-tables is tables + local-disk. Every product is
+a coordinate, not a camp member. `retrieval-engines` owns the model axis;
+`data-persistence` owns the deployment axis.
+
+**Vector is a capability, not a camp.** Every engine now ships an ANN index
+(`pgvector`, Elasticsearch vectors, Neo4j vector indexes, Qdrant filters). So
+`retrieval-engines` is not "graph vs vector" — it is *does the specialist
+survive, or does one engine absorb everything?* That is the answerable question.
+
+**`temporal-memory` is a real contest, not a feature.** Big vendors are bolting
+timestamps onto existing stores; HydraDB claims native temporal handling is
+faster and cleaner. The pillar measures whether native temporal products gain
+share against retrofitted timestamp columns.
+
+**Measurement caveats — read before building charts:**
+
+| Pillar | Caveat |
+|---|---|
+| `self-hosted-vs-saas` | Self-hosted side is observable (npm/PyPI). SaaS side is **not** — GHL/Monday/Zapier publish no counts. Only IDE extensions have public installs (VS Code Marketplace, Open VSX). Either publish the SaaS side as a flat baseline with the caveat visible, or narrow the pillar to self-hosted apps vs cloud APIs and use the `ollama`/`openai` download ratio as the cloud proxy. **Open question: a separate SaaS data source may be added.** |
+| `temporal-memory` | `agent memory` is the right OpenAlex lead; HF and trademark evidence are supporting context only. Generic `memory` is heavily polysemous. |
+| `retrieval-engines` | The relational baseline (Postgres) is nearly invisible in all six sources — `psycopg2`/`asyncpg` growth is flat noise. The pillar can show graph/vector *gaining*, not tables *losing*. Track `psycopg`, `asyncpg`, `sqlalchemy`, `duckdb` as a baseline cohort and label it as such. |
+| `data-persistence` | Generic packages (`boto3`, `fsspec`) dominate raw download counts. Score per-package growth, never cohort sums. |
+| `stack-structure` | HF is a poor detector of enterprise platforms. Do not infer Databricks adoption from SDK downloads alone. |
+
+**Scoring model (not yet implemented).** Research recommends growth over counts:
+smoothed log growth per source, robust-z against a trailing baseline, combined
+across four evidence families — research 25% (arXiv + OpenAlex as **one**
+family), developer activity 30% (GitHub), package adoption 35% (PyPI), commercial
+intent 10% (USPTO). HF sits at **0% in the core score**, context overlay only.
+Missing families renormalize; they never score zero. Confidence shrinks sparse
+results toward the midpoint. Breakout requires positive momentum in ≥2
+independent families.
+
+**This needs snapshot history we do not have yet.** PyPI Stats retains only 180
+days, so daily snapshotting is now the gating prerequisite for any of the above.
+
+**Two research deliverables are missing** from `archive/`:
+`arena_query_plan_60.csv` and `arena_trend_intelligence_plan.json`. The arena
+definitions alone are not enough to rewrite the queries.
+
+**OpenAlex syntax conflict.** Research recommends the scoped parameters
+`search.title` / `search.title_and_abstract` and calls `filter=title.search:`
+legacy. §5.8 documents the current implementation as `filter=title.search:"…"`.
+Verify against the live API before rewriting.
 
 ---
 
