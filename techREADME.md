@@ -32,8 +32,8 @@ humanREADME.md         plain-language guide
 techREADME.md          this file
 HANDOVER.md            current state + next steps
 archive/               superseded docs
-notebooks/silver/      silver_nodes.py — MERGE & dedup
-notebooks/gold/        gold_momentum.py — aggregates
+notebooks/silver/      silver_nodes.py — JSONL → silver_nodes
+notebooks/gold/        gold_momentum.py — silver → gold_level + gold_volume
 schemas/               dump.sql — canonical DDL
 n8n/                   workflow export
 ui/                    AppKit (Node + React) scaffold
@@ -88,22 +88,59 @@ One JSON object per line. Every leg emits this exact shape.
 
 | Field | Type | Notes |
 |---|---|---|
-| `edge_id` | string | MERGE key |
-| `edge_type` | string | `paper_model` \| `paper_citation` \| `repo_package` \| `trademark_company` |
-| `src_node_id` | string | FK → nodes.node_id |
-| `dst_node_id` | string | FK → nodes.node_id |
-| `weight` | double | citation count, download delta |
+| `edge_id` | string | sha1 of edge_type + both endpoints — deterministic, so re-runs are idempotent |
+| `edge_type` | string | see §3.4 |
+| `src_node_key` | string | FK → silver_nodes.node_key |
+| `src_node_id` | string | FK → silver_nodes.node_id (always a real node) |
+| `dst_node_id` | string | real node **or** synthetic hub (`pillar:*`, `company:*`) |
+| `weight` | double | 1.0 for membership/citation; reserved for weighted edges |
 | `source` | string | upstream API |
-| `ingested_at` | timestamp | partition key |
+| `observed_date` | date | partition key |
 
-### 3.4 Join rules
+### 3.4 Edge types
 
-| Edge | Rule |
-|---|---|
-| `paper_model` | HF `arxiv_id` ↔ arXiv ID |
-| `paper_citation` | arXiv DOI ↔ OpenAlex work |
-| `repo_package` | parse `setup.py` / `pyproject.toml` → PyPI name |
-| `trademark_company` | `strip_company_artifacts` canonical normalization |
+| Edge | Rule | Status |
+|---|---|---|
+| `pillar_membership` | entity → `pillar:<id>` | ✅ 2,432 |
+| `paper_citation` | OpenAlex `referenced_works[]` → `node_id` | ✅ 371 |
+| `package_dependency` | PyPI `requires_dist` / npm `dependencies` → corpus | ✅ 13 |
+| `repo_package` | registry repo URL slug → GitHub `node_id` | ✅ 5 |
+| `trademark_company` | `strip_company_artifacts` canonical normalization | ✅ 1 |
+| `arxiv_openalex` | arXiv ID ↔ OpenAlex DOI (`10.48550/arxiv.<id>`) | ✅ 0 (no corpus overlap) |
+| `paper_model` | HF `arxiv_id` ↔ arXiv ID | ❌ needs per-model call (see below) |
+
+#### `paper_model` — why it is deferred
+
+The HF leg calls one endpoint: `GET /api/models?search=<kw>&limit=100`. That
+returns a **list** with summary fields only (`id`, `downloads`, `likes`,
+`pipeline_tag`). The arXiv ID lives in the model **card**, which is only returned
+by the per-model endpoint:
+
+```
+GET /api/models/<org>/<name>   ->  cardData.arxiv = "2407.21783"
+```
+
+**Cost:** the list call is 1 request per 100 models; the detail call is 1 request
+per model. At ~543 distinct models that is ~543 extra requests per run — a ~500×
+increase against a free API.
+
+**Expected yield:** most models have no arXiv ID (community fine-tunes,
+quantizations, LoRAs). Estimated 10–20% hit rate → ~50–100 edges.
+
+**Cheaper option if pursued:** fetch details only for models above a download
+threshold (top ~50 per pillar ≈ 250 requests). Models with papers behind them
+are the ones with meaningful download counts.
+
+**Work required:** a new HTTP node with batching and retry, plus a join on the
+extracted arXiv ID. Not a few lines in the parse node.
+
+**Bipartite, not pairwise.** "Two entities share a pillar" as a pairwise edge is
+O(n²) — one pillar with 543 models yields ~147,000 edges. Bipartite gives the
+same information in linear space: one edge per `(entity, pillar)`.
+
+**Synthetic hubs.** `pillar:*` and `company:*` are not rows in `silver_nodes`.
+Pillars are not observed entities, so putting them in Silver would corrupt its
+grain. The UI materialises them.
 
 DDL: [`schemas/dump.sql`](./schemas/dump.sql).
 
@@ -127,7 +164,7 @@ Code node, 5 items. Only place to change queries.
 
 **Pillar set locked 2026-11-14 and applied.** This node is the only input; it
 writes `pillars.json` at runtime (gitignored). Never edit `pillars.json` — it is
-an output. Rationale: `pillars_research_11_14_2026.md`; details §5.9.
+an output. Rationale: `archive/pillars_research_11_14_2026.md`; details §5.9.
 
 ```js
 { pillar: 'self-hosted-vs-saas', keyword: 'self-hosted AI',  hf: 'gguf',      pypi: ['ollama','llama-cpp-python','open-webui','langchain'] },
@@ -488,11 +525,53 @@ Verify against the live API before rewriting.
 
 ## 6. Databricks Processing
 
+All three stages are **full rebuilds**, not incremental merges. Bronze is the
+immutable archive, so a re-run is always correct and never depends on prior
+state. This is why re-running a notebook is cheap and safe.
+
 | Stage | Notebook | Action |
 |---|---|---|
-| Bronze | — | raw files from Volume, as-landed, partitioned by date/source |
-| Silver | `notebooks/silver/silver_nodes.py` | deterministic `node_id` hash, canonical name normalization, `MERGE` into `silver_nodes` / `silver_edges` (idempotent, latest-wins) |
-| Gold | `notebooks/gold/gold_momentum.py` | aggregate downloads/stars/citations by `(metric_date, pillar, source)` → `gold_momentum` |
+| Bronze | — | raw JSONL at `/Volumes/momentum/momentum/landing/<source>/`, as-landed, never edited |
+| Silver | `notebooks/silver/silver_nodes.py` | read JSONL → type → dedup → `silver_nodes`, one row per `(node_id, pillar, observed_date)` |
+| Silver | `notebooks/silver/silver_edges.py` | `silver_nodes` → `silver_edges`, bipartite entity→pillar edges |
+| Gold | `notebooks/gold/gold_momentum.py` | → `gold_level` (per-entity metrics, long format) + `gold_volume` (entity counts) |
+
+### 6.1 Platform concepts — where each term belongs
+
+These are used loosely; the distinction matters when debugging.
+
+| Term | What it is | Where it appears |
+|---|---|---|
+| **Lakehouse** | Architecture: object storage + warehouse table semantics. Not a product. | The whole Databricks layer |
+| **Delta Lake** | Table format. ACID transactions, schema enforcement, time travel, via `_delta_log` beside the data files. | `silver_nodes`, `gold_level`, `gold_volume` |
+| **Parquet** | Columnar compressed file format. The physical storage inside every Delta table. | Never accessed directly |
+| **Volume** | A permissioned folder in UC storage. Holds **files**, not rows. | Bronze (`landing/`) |
+| **Delta table** | Files + transaction log, queryable by name. Holds **rows**. | Silver, Gold |
+
+**Volume vs table is the key distinction.** Bronze is files (read by path). Silver
+and Gold are tables (read by name). A Volume cannot be queried with `SELECT`; a
+table cannot be listed with `fs ls`.
+
+**Not a database in the RDBMS sense.** No server holding rows in memory, no
+user-tuned indexes, no connection pool. `PARTITIONED BY` is a directory layout,
+not an index — which is why partitioning on a millisecond timestamp produced 123
+partitions for 1,849 rows, and why both Silver and Gold partition on
+`observed_date` instead.
+
+**Implication for the app:** Databricks is archive + compute, not a serving
+database. The UI must not query Delta on every page load. Lakebase (managed
+Postgres) is the serving copy.
+
+### 6.2 Known data quirks
+
+| Quirk | Detail |
+|---|---|
+| npm `series` exploded | npm rows carry 7 days of per-day downloads. Gold explodes them into `downloads_day` rows dated by **series day**, giving npm real history back to 2026-11-08 — a week before Silver started. The final day is dropped (npm returns 0 for the unfinished day). |
+| Double-count across pillars | Silver tags an entity once per matching pillar, so a 4-pillar repo appears 4× with the same star count. Charting one pillar is correct; summing across all pillars double-counts. Use `gold_volume.node_count` for distinct totals. |
+| Bronze holds pre-fix bare IDs | n8n began emitting `npm:minio` / `pypi:minio` on 2026-11-14, but Bronze files from before that carry bare names and are never rewritten. **Silver re-applies the prefix on read**, so the table is consistent regardless of file age. The notebook prints how many rows needed it — zero is normal; a jump means n8n regressed. |
+| HF `downloads` is cumulative | Lifetime total, not a daily rate. Never sum with `downloads_day`. |
+| Growth columns not built | `growth_7d` / `growth_30d` need a full window. Silver started 2026-11-11, so 7-day deltas are computable from ~2026-11-18. |
+| npm `downloads_7d` removed | Rolling 7-day total with no per-day breakdown, so it could not show momentum. Superseded by the exploded series. |
 
 ---
 
@@ -500,11 +579,54 @@ Verify against the live API before rewriting.
 
 Scaffolded in `ui/`, not built. Port `8050`.
 
+**Rendering stack:** **Cytoscape.js** for the graph — locked. Plain JS, no
+Databricks dependency, runs inside a Databricks App. Databricks itself ships no
+graph/network chart type and makes no library recommendation; its native viz is
+bar/line/scatter/pie only.
+
+### 7.1 Screens
+
 | Screen | Reads | Purpose |
 |---|---|---|
-| Momentum Board | `gold_momentum` | time-series per pillar per signal; divergence view |
-| Graph Explorer | `silver_nodes` + `silver_edges` | 3D force-directed graph |
+| Momentum Board | `gold_level` + `gold_volume` | time-series per pillar per signal; divergence view |
+| Graph Explorer | `silver_nodes` + `silver_edges` | 2D network graph (Cytoscape.js) |
 | Ask + Lineage | Genie | NL Q&A with lineage cards |
+| Setup / Pillars | `pillars.json` | edit the 5 pillars and their keywords |
+| Logs | n8n executions | run history, failures, gate decisions |
+
+### 7.2 Graph Explorer — what makes it valuable
+
+**2D is primary, not 3D.** Most 3D graph explorers are demos that answer nothing.
+The dataset is small (~1.1k nodes, edges likely 2–5k) so performance is not the
+constraint — readability is. 3D rotation actively hurts comprehension here.
+
+What earns its place:
+
+| Feature | Why it is the value |
+|---|---|
+| **Pillar clusters** | The interesting thing is not the nodes but which pillars *share* entities — that is where the contests actually overlap |
+| **Momentum as colour, scale as size** | Colour = rate of change (Gold), size = absolute level. Separates "big and stalling" from "small and accelerating" |
+| **Time scrubber** | Drag through days and watch clusters form. Highest-value interaction — turns a static map into the thesis. Notched for the recent 10 days. |
+| **Path tracing** | Trademark → packages → repos → papers. The paper-to-revenue story, and the one thing no single source can show |
+| **Edge type as line style** | Solid = citation, dashed = same-package, dotted = trademark-company. Without this, edges are meaningless spaghetti |
+
+**Skip:** free-floating 3D rotation, physics that never settles, labels on every
+node. If a user cannot answer "which pillar is accelerating" in under 10 seconds,
+the graph failed.
+
+**Blocker:** `silver_edges` is unbuilt, so there is nothing to draw yet. The graph
+UI is blocked on edges, not on the rendering choice.
+
+### 7.3 Charts, AI access, and controls
+
+| Element | Detail |
+|---|---|
+| **Charts** | Bar, line, pie — Databricks native AI/BI dashboards. No custom charting needed. |
+| **AI access** | MCP server so an AI client can read the Gold tables directly |
+| **Ingest toggles** | Per-leg on/off switches for the 7 sources |
+| **Cron toggle** | Enable/disable the daily schedule without editing the workflow |
+| **Logs** | Execution history, validation failures, gate decisions |
+| **Setup / Pillars** | User-editable pillar list and keywords — writes `pillars.json` |
 
 ---
 
@@ -616,13 +738,13 @@ tools by the Zed `private_files` setting).
 
 | Issue | Impact |
 |---|---|
-| `TEMP CRON` enabled alongside `Cron · Daily 05:00` | manual trigger + schedule double-fires all 5 daily legs |
+| `TEMP CRON` enabled alongside `Cron · Daily 05:00` | manual trigger + schedule double-fires all 6 daily legs |
 | `Databricks1` still connected from `Route` output 1 | inert (disabled), but should be deleted |
 | `Write Error to UI` | disabled placeholder, no URL — the HITL/error feed target |
 | `Merge Validations` input indices shuffled | harmless (append mode) but confusing |
 | USPTO zips exceed the 5 GiB upload cap | upload node will fail on those legs |
 | `TRTYRAP` only newest part fetched | fragment, not the dataset |
-| OpenAlex bypasses `Merge` | `Gate.totalFiles` reads 5 daily / 1 weekly |
+| OpenAlex bypasses `Merge` | `Gate.totalFiles` reads 6 daily / 1 weekly |
 | `WriteBinaryFile` overwrites | rerun on the same day replaces that day's file; USPTO zips have no date and always overwrite |
 | `Slack · Approve Upload` channel is a placeholder | `channelId` set to `ingestion-alerts` by name — must be changed to the real channel |
 
@@ -636,6 +758,15 @@ tools by the Zed `private_files` setting).
 - ✅ Lakebase `Admin` role verified (connect + DDL/DML + pgvector)
 - ✅ All 7 legs tested against live APIs
 - ✅ Validation + Gate + Slack approval + Volume upload wired
+- ✅ **Silver** — `silver_nodes` built from Bronze JSONL, 2,432 rows, idempotent
+- ✅ **Registry-qualified IDs** — Silver re-applies the `npm:`/`pypi:` prefix on read, so pre-fix Bronze files are handled without rewriting the archive
+- ✅ **Gold** — `gold_level` (3,921 rows) + `gold_volume` (76 rows), idempotent
+- ✅ **npm daily series** — exploded into `downloads_day`, 7 days of real history (2026-11-08 → 11-14)
+- ✅ `node_id` registry-qualified (`npm:minio` vs `pypi:minio`)
+- ✅ **`silver_edges`** — 2,822 edges across 5 types, idempotent
+- ✅ **OpenAlex `referenced_works`** — 371 citation edges inside the corpus
+- ✅ **Package metadata** — PyPI `requires_dist` / `project_urls`, npm `dependencies` / `repository.url`; 13 dependency + 5 repo edges
+- ⏳ `paper_model` — needs a per-model HF call; not in `/api/models`
+- ⏳ Growth columns — need a full window (7-day from ~2026-11-18). npm already has enough history to compute now.
 - ⏳ USPTO annual backfile (1 of 177 parts)
-- ⏳ Silver/Gold not pointed at real tables
 - ⏳ UI not built

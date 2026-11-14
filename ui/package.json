@@ -2,7 +2,7 @@
   "name": "momentum-ui",
   "version": "0.1.0",
   "private": true,
-  "description": "Databricks AppKit (Node + React) frontend — Momentum Board, 3D Graph Explorer, Genie Ask + Lineage",
+  "description": "Momentum Engine UI — Momentum Board, Graph Explorer (Cytoscape.js), Setup, Logs",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -11,9 +11,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cytoscape": "^3.30.2",
+    "cytoscape-fcose": "^2.2.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@databricks/js-client": "latest"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
