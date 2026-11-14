@@ -5,7 +5,8 @@ the `Pillar Keywords` node** in workflow `GQs6702n6vwYjKVa`; it writes
 `pillars.json` at runtime (gitignored). This file records *why* the pillars look
 the way they do.
 
-Status: **locked 2026-11-14**, applied to the pipeline.
+Status: **pillars locked 2026-11-14.** Source-coverage audit received and
+verified the same day — see §6–7. Pillars unchanged by the audit.
 
 ---
 
@@ -107,8 +108,9 @@ Pulled to test whether pillar 1 is observable. It is — on the self-hosted side
 - **`ollama` / `openai` ≈ 4.5%.** Local model serving is real but small against
   cloud API usage.
 - **`openclaw`** ("multi-channel AI gateway with extensible messaging
-  integrations") is 11.4M/mo on npm — 20× `n8n`. **Verify before charting:** 275 MB
-  unpacked × 11.4M ≈ 3 PB/mo of npm bandwidth. Could be a dependency-of or CI mirror.
+  integrations") is 11.4M/mo on npm — 20× `n8n`. **Still unverified** whether this
+  is a dependency-of or CI mirror; 275 MB unpacked × 11.4M ≈ 3 PB/mo of npm
+  bandwidth.
 - **`hermes` on npm is a different package.** Our Hermes has no npm/PyPI presence —
   GitHub only. Not measurable as a download series.
 - **`open-webui` on npm is a stub** (355/mo). Real distribution is Docker + PyPI.
@@ -146,7 +148,7 @@ The pipeline collects PyPI only — no npm leg. So every package in a pillar's
 
 `n8n` and `openclaw` are therefore **excluded** from pillar 1's cohort despite
 being the headline self-hosted apps. Adding an npm leg is the fix, not padding
-the PyPI list with stubs.
+the PyPI list with stubs. **The audit agrees — npm is the highest-value addition.**
 
 ### Packages deliberately dropped
 
@@ -158,19 +160,270 @@ the PyPI list with stubs.
 
 ---
 
-## 6. Known gaps
+## 6. Source-coverage audit (received 2026-11-14)
 
-### Pillar 1's SaaS side is unmeasured
+External review of whether the six legs are the right sources for these five
+pillars. **Verdict: pillars preserved; the changes belong in the measurement
+layer, not the pillar definitions.**
 
-GHL, Monday and Zapier publish no download counts. Only IDE extensions have
-public install numbers (VS Code Marketplace, Open VSX). Options:
+### Three architectural changes
 
-1. Publish the SaaS side as a **flat baseline** with the caveat visible in the UI.
-2. Narrow the pillar to self-hosted apps vs cloud APIs, using the
-   `ollama`/`openai` ratio as the cloud proxy.
+1. **Separate discovery from measurement.** Find new contenders broadly, then
+   track a stable cohort over time. Don't let today's most popular results define
+   the dataset.
+2. **Store dated observations, not ranked search results.** Every metric needs a
+   timestamp, a stable entity ID, a source, and a definition of what it measures.
+3. **Add deployment and usage signals.** Downloads and stars describe activity
+   around published artifacts. They cannot tell you whether software is deployed,
+   retained, or replacing a competitor.
 
-**Open question: a separate SaaS data source may be added.** Until then, option 1
-with a visible caveat.
+### Per-leg recommendations
+
+| Leg | Verdict | Change |
+|---|---|---|
+| arXiv | keep, change discovery + counting | `ti:` / `abs:` field-scoped queries + `submittedDate` windows; weekly counts of matching papers; keep one broad query as a recall check |
+| Hugging Face | keep, add time-series | `sort=downloads` is a ranking feed, not a growth feed. Persist download counts per stable model ID, diff snapshots |
+| GitHub | replace star-ranked discovery | Discover by `created:` date windows, maintain a stable cohort, track weekly star *additions* |
+| OpenAlex | change scope, drop citation sort | `default.search` → title/abstract scope; count new works by publication week/month; citation counts become a separate delayed-impact signal |
+| PyPI | replace `/recent` | `/recent` is not a historical series. Use BigQuery (or ClickPy) for daily counts |
+| USPTO | keep as weak leading indicator | Filings are commercial intent, not adoption. Store filing dates + applicant links |
+
+> **Key distinction:** date-windowed counts are not a replacement for longitudinal
+> tracking. Windowed counts tell you what's *entering* the ecosystem; snapshots
+> tell you whether existing contenders are *gaining traction*. You need both.
+
+### The missing source category: deployment evidence
+
+> "You're missing an entire category of evidence: **where software is actually
+> running and what infrastructure people are choosing to operate**."
+
+Proposed as a **new source category** (`deployment_evidence`), not a seventh leg:
+
+| Source | Value | Caveat |
+|---|---|---|
+| Container registries (Docker Hub) | Another distribution channel for self-hosted products | Pulls include CI, caching, redeploys |
+| Technographics (BuiltWith, Wappalyzer) | Web-visible technology footprint over time | Blind to local apps and private infra |
+| Production surveys (CNCF) | Periodic benchmark | Survey-level, not product-specific |
+| Cloud marketplace / managed-service disclosures | Shows shift from self-managed to managed | Inconsistent access and reporting |
+
+This matters for both blind spots: pillar 1 needs to know whether users run the
+software themselves, and pillar 4 needs architecture evidence to distinguish
+local disk from object store from managed cloud. **Container distribution alone
+cannot tell you where a running instance stores its data.**
+
+### Momentum arithmetic
+
+Track three dimensions separately per contest:
+
+- **Adoption activity** — package downloads, model downloads, container pulls, marketplace installs, disclosed seats
+- **Ecosystem momentum** — new repos, releases, new packages, publications, integrations
+- **Deployment evidence** — observed footprints, surveys, disclosed deployment counts
+
+Two-sided share:
+
+```
+S_A(t) = A(t) / (A(t) + B(t))
+ΔS_A   = S_A(t) − S_A(t − 28d)
+```
+
+`A(t)` and `B(t)` must be **comparable and consistently measured over the same
+period**. Downloads from comparable registries, or paid seats from comparable
+disclosures — never GitHub stars on one side and revenue on the other.
+
+For heterogeneous sources, compute a separate share index per metric, normalize,
+then combine with documented weights. **If one side is unmeasured, report
+`coverage incomplete` — do not manufacture a 50/50 comparison.**
+
+### Immediate fix list
+
+| # | Action | Status |
+|---|---|---|
+| 1 | Correct OpenAlex docs to reflect live `default.search` | ✅ done (§7) |
+| 2 | Review and enable `OpenAlex WEEKLY` | ⬜ inspect date window + aggregation first |
+| 3 | Add daily npm download-history leg | ⬜ recommended next |
+| 4 | Replace PyPI `/recent` with daily aggregates | ⬜ **cheaper than expected — see §7.4** |
+| 5 | GitHub discovery → `created:` windows + star backfill | ⬜ recommended next |
+| 6 | Date-windowed, title/abstract-scoped arXiv + OpenAlex | ⬜ |
+| 7 | Add metric coverage + source confidence fields | ⬜ |
+
+> **On the disabled `OpenAlex WEEKLY` node:** don't enable it blindly. Inspect its
+> date window, aggregation logic, and whether it produces the same metric as the
+> live node first.
+
+---
+
+## 7. Verified API facts (2026-11-14)
+
+Every claim in the audit was independently checked against live endpoints. Two
+material corrections.
+
+### 7.1 GitHub historical star API — VERIFIED
+
+`GET https://api.github.com/repos/{owner}/{repo}/stargazers/history`
+
+Announced 2026-09-04. Returns **HTTP 200 unauthenticated**:
+
+```json
+[{"week":1794096000,"total":781,"days":[99,111,135,184,131,109,12]}, ...]
+```
+
+`week` is a unix timestamp (Sunday UTC); `days` is a 7-element array with **no
+per-day labels** — derive dates from `week` + index.
+
+**Caveats the audit omitted:**
+
+- **Paginated** — 30 weeks per page. `ollama/ollama` needs 6 pages.
+- **Not a true historical record** — it returns *stars created on each date that
+  remain active today*. **Unstars are not tracked**, so past weeks can silently
+  shrink.
+- **60 req/hr unauthenticated** — the standard anon limit, not unlimited.
+
+### 7.2 npm downloads API — VERIFIED
+
+`GET https://api.npmjs.org/downloads/range/{start}:{end}/{package}` → daily
+granularity confirmed.
+
+- Earliest data: **2015-01-10** (`2015-01-01:2015-01-05` → HTTP 400)
+- Max **18 months** per query; **365 days / 128 packages** for bulk
+- No documented rate limit
+- Data lands once daily after UTC midnight — "today" is usually absent
+- Isolated `0` values are gaps, not real zero-download days
+
+### 7.3 Docker Hub — **FALSE as stated**
+
+The audit said "track Docker Hub image pulls." There is **no historical pull
+endpoint**. Only current all-time totals:
+
+| Image | `pull_count` |
+|---|---|
+| `n8nio/n8n` | 285,719,882 |
+| `ollama/ollama` | 200,335,017 |
+
+All history endpoints return **404** (`/pulls/history`, `/statistics`, `/metrics`).
+The only historical pull data Docker offers is an org-owner-authenticated CSV —
+unusable for third-party images.
+
+**GHCR and Quay expose no pull counts at all.**
+
+> **Consequence:** container tracking requires our own snapshot storage from day
+> one. It is a *forward-only* signal — no backfill is possible. That makes it
+> lower priority than npm, which has 10 years of history.
+
+### 7.4 PyPI — VERIFIED, with a cheaper path than BigQuery
+
+**BigQuery dataset is real:** `bigquery-public-data.pypi.file_downloads`.
+Event-level, partitioned by day on `timestamp` — **not pre-aggregated**, so daily
+counts need `GROUP BY DATE(timestamp)`. History from ~2016-01-22.
+
+**Two durability caveats the audit omitted:**
+
+- Linehaul **under-reported by ~10× before 2018-07-26**
+- The 2026-08-24 break is **permanent** — metadata-only requests (PEP 658
+  `.metadata` sidecars, ~40% of prior volume) are no longer counted. Historical
+  rows were not rewritten.
+
+**1 TiB/month free tier: TRUE** — but **misattributed**. `docs.pypi.org` says
+nothing about it. The figure appears in the PyPA guide and on pypistats.org.
+
+**The cheaper path — `pypistats /overall` already gives 180 days of daily data:**
+
+```
+GET https://pypistats.org/api/packages/ollama/overall
+→ 181 daily points, 2026-05-17 → 2026-11-13
+→ categories: with_mirrors | without_mirrors (?mirrors=false)
+```
+
+So the "snapshotting gates everything" claim in earlier notes was **too
+pessimistic**. We can backfill 180 days immediately with one endpoint, no auth,
+no cost. BigQuery becomes the *long-run* answer, not the blocker.
+
+**ClickPy** (ClickHouse public dataset) is a free, no-auth SQL-over-HTTP
+alternative with history from 2016-01-22:
+
+```
+https://sql-clickhouse.clickhouse.com/?user=play&query=...
+tables: pypi.pypi_downloads_per_day (date, project, count)
+```
+
+It is a **mirror of the same BigQuery feed**, so it inherits both caveats. A
+convenience, not an independent source.
+
+### 7.5 OpenAlex — VERIFIED, with a nuance
+
+| Form | HTTP | `meta.count` (lakehouse) |
+|---|---|---|
+| `filter=default.search:` | 200 | 3227 |
+| `filter=fulltext.search:` | 200 | 3227 |
+| `search=` | 200 | 3227 |
+| `filter=title.search:` | 200 | 519 |
+| `search.title_and_abstract=` | 200 | 1099 |
+
+`default.search` is a deprecated alias of **`fulltext.search`** specifically —
+not "broad full-text search" generically. It still works and behaves identically.
+
+**Date filtering:** `from_publication_date` / `to_publication_date`. Verified:
+`title.search:lakehouse` + 2025 range → 119 (down from 519).
+
+**Rate limits changed:** the "polite pool" was **replaced by API keys in February
+2026**; `mailto` is now ignored. 10 req/s keyless, 30 req/s free key. A key is
+required for cursor paging past page 1. Keyless shares a **$0.10/day IP budget**.
+
+### 7.6 arXiv — VERIFIED
+
+`submittedDate:[YYYYMMDDTTTT+TO+YYYYMMDDTTTT]` works and genuinely narrows:
+`ti:"graph database"` → 117 unfiltered, **12** with a 2026 range. 3-second delay
+is a documented *request*, not an enforced limit. `max_results` caps at 30,000.
+
+### 7.7 Hugging Face — VERIFIED
+
+`downloads` is a **rolling 30-day** metric (confirmed by HF staff). It can
+*decrease* as the window slides — it cannot measure growth.
+
+**No public historical endpoint exists.** The 401s on `/downloads` and `/stats`
+are an auth-gated catch-all (a nonsense control path also returns 401), not
+evidence of a real endpoint. HF's answer for granular history is Publisher
+Analytics — org-scoped, not public.
+
+`expand[]=downloadsAllTime` exists but is not returned by default.
+
+### 7.8 CNCF survey — VERIFIED, all figures exact
+
+82% of container users run Kubernetes in production; 66% of orgs hosting GenAI
+models use Kubernetes for some or all inference. Published **2026-01-20**.
+
+Caveat: 82% is *of container users*, not of all organizations. 44% of orgs still
+run no AI/ML on Kubernetes.
+
+### 7.9 Technographics — VERIFIED, expensive
+
+| Tool | Historical | Price |
+|---|---|---|
+| BuiltWith | Domain API (historical + confidence), Change API (additions/removals), Trends API | **$295/mo** Basic, $495 Pro, $995 Team; credits separate |
+| Wappalyzer | Monthly groupings via `squash=false` + `max_age=N` | **$450/mo Business — hard gate.** Free tier (50 lookups) does not include it |
+
+The audit's "paid beyond a limited free allowance" understates Wappalyzer: the
+historical feature is not available on any tier below Business.
+
+---
+
+## 8. Known gaps
+
+### Pillar 1's SaaS side is partly measurable
+
+The audit's answer: **partly, but not symmetrically.**
+
+| Signal | Value | Limitation |
+|---|---|---|
+| Extension marketplace installs | Strong for IDE products | Not all products publish counters |
+| Official customer / paid-seat disclosures | Strong when product-specific and repeated | Quarterly; definitions vary |
+| App-store rankings | Directional | Ordinal, volatile |
+| Public integration counts | Ecosystem breadth | Integrations ≠ active users |
+| Web traffic estimates | Directional reach | Not usage or paid adoption |
+| Search / social mentions | Attention | Not adoption share |
+
+**Recommendation adopted:** build an explicit **per-contender measurement-coverage
+field**. A missing SaaS metric shows as a gap, never silently replaced with the
+other side's unrelated metric.
 
 ### Pillar 3's relational baseline is invisible
 
@@ -178,22 +431,22 @@ Postgres has no repo to star and no growth signal — `psycopg2`/`asyncpg` downl
 are flat noise. The pillar can show graph/vector *gaining*, not tables *losing*.
 
 Mitigation: track `psycopg`, `asyncpg`, `sqlalchemy`, `duckdb` as a **baseline
-cohort**, labelled as a reference line rather than a scored contender. `duckdb` is
-the interesting one — relational, and actually growing.
+cohort**, labelled as a reference line rather than a scored contender.
 
 ### Pillar 4's cloud side is partly blind
 
-Managed cloud storage (S3, R2, GCS) has no download signal. Same treatment as
-pillar 1: baseline, caveat visible.
+Managed cloud storage (S3, R2, GCS) has no download signal. Same treatment:
+baseline, caveat visible. This is exactly what `deployment_evidence` would fix.
 
-### Snapshotting gates everything
+### Snapshotting — less urgent than previously thought
 
-The scoring model below needs trailing history. PyPI Stats retains only **180
-days**. Every day without snapshots is history that cannot be recovered.
+`pypistats /overall` backfills 180 days today; ClickPy backfills to 2016. So
+PyPI history is **not** lost. But npm, GitHub stars, and Docker pulls are all
+forward-only from our first snapshot — those still need to start now.
 
 ---
 
-## 7. Scoring model (not yet implemented)
+## 9. Scoring model (not yet implemented)
 
 Growth over counts. Per source:
 
@@ -240,23 +493,45 @@ Rules:
 
 Only the third answers the pillar's question.
 
+### Contest share (added by audit)
+
+For two-sided contests, compute share directly rather than comparing composites:
+
+```
+S_A(t) = A(t) / (A(t) + B(t))
+ΔS_A   = S_A(t) − S_A(t − 28d)
+```
+
+Requires comparable measurement on both sides. Where one side is unmeasured,
+report `coverage incomplete`.
+
 ---
 
-## 8. Open questions
+## 10. Open questions
 
-| # | Question |
-|---|---|
-| 1 | Is `openclaw`'s 11.4M/mo real, or a dependency-of / CI mirror? |
-| 2 | Add an npm leg so `n8n` and `openclaw` become measurable? |
-| 3 | Add a SaaS data source for pillar 1's right side? |
-| 4 | OpenAlex syntax: research recommends scoped `search.title` / `search.title_and_abstract` and calls `filter=title.search:` legacy. Current implementation uses `filter=title.search:"…"`. Verify against the live API. |
-| 5 | Start daily snapshots — gates the entire scoring model. |
+| # | Question | Status |
+|---|---|---|
+| 1 | Is `openclaw`'s 11.4M/mo real, or a dependency-of / CI mirror? | open |
+| 2 | Add an npm leg so `n8n` and `openclaw` become measurable? | **recommended — highest value** |
+| 3 | Add a SaaS data source for pillar 1's right side? | partly — marketplace installs + disclosures; coverage field |
+| 4 | OpenAlex syntax | **resolved** — `default.search` aliases `fulltext.search`; use `title.search` / `title_and_abstract` + date filters |
+| 5 | Start daily snapshots | **PyPI not urgent** (`/overall` backfills 180d); npm/GitHub/Docker are forward-only |
+| 6 | Add `deployment_evidence` source category? | recommended — prototype Docker Hub + small technographics sample |
+| 7 | Enable `OpenAlex WEEKLY`? | inspect date window + aggregation first |
+
+### Recommended order
+
+1. **npm leg** — 10 years of history, free, no auth, directly fixes pillar 1
+2. **GitHub star backfill** — new API removes the polling problem
+3. **PyPI `/overall`** — 180-day backfill today, no BigQuery needed yet
+4. **arXiv + OpenAlex date-windowed queries** — switch from popularity to momentum
+5. **`deployment_evidence` prototype** — Docker Hub snapshots + small technographics sample
 
 ---
 
-## 9. Reference
+## 11. Reference
 
-- `archive/pillars_research_11_12_2026.md` — external research response
+- `archive/pillars_research_11_12_2026.md` — first research response (arena model)
 - `archive/pillars.arenas.json` — research's arena definitions
 - `archive/arena_query_plan_60.csv` — 60 source-specific queries
 
@@ -265,3 +540,19 @@ Only the third answers the pillar's question.
 > Our pillar 1 (`self-hosted-vs-saas`) is a different contest from the research's
 > `personal-data-plane` (local ingestion and on-device runtime). The research
 > files are reference material, not source of truth.
+
+### Live endpoint reference
+
+| Source | Endpoint | History | Auth |
+|---|---|---|---|
+| arXiv | `export.arxiv.org/api/query?search_query=…` | full | none |
+| Hugging Face | `huggingface.co/api/models?search=…` | **none** (rolling 30d) | none |
+| GitHub search | `api.github.com/search/repositories?q=…` | n/a | none (60/hr) |
+| GitHub stars | `api.github.com/repos/{o}/{r}/stargazers/history` | weekly, paginated | none (60/hr) |
+| OpenAlex | `api.openalex.org/works?filter=title.search:…` | full | key for paging |
+| PyPI recent | `pypistats.org/api/packages/{p}/recent` | **none** | none |
+| PyPI daily | `pypistats.org/api/packages/{p}/overall` | **180 days** | none |
+| PyPI long | BigQuery `pypi.file_downloads` / ClickPy | 2016→ | GCP / none |
+| npm | `api.npmjs.org/downloads/range/{a}:{b}/{p}` | 2015→ | none |
+| Docker Hub | `hub.docker.com/v2/repositories/{ns}/{r}/` | **current only** | none |
+| USPTO | bulk TDXF zip | full | ODP key |
