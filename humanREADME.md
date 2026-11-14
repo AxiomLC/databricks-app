@@ -25,17 +25,26 @@ For the machine-readable version (functions, parsing rules, node wiring), see
 
 ### The five areas being tracked (called "pillars")
 
-A **pillar** (one of five technology themes this app follows) is a bet on where
+A **pillar** (one of five technology contests this app follows) is a bet on where
 computing infrastructure is going. Each pillar is tracked by searching for its
 keywords across every data source.
 
-| Pillar | What it covers | Why it matters |
+Each pillar is a **contest** — two ways of doing the same job, and the app tracks
+which one is gaining ground.
+
+| Pillar | The contest | Why it matters |
 |---|---|---|
-| **Graph databases** | Databases built around relationships rather than tables | The plumbing behind recommendation engines, fraud detection, and knowledge graphs |
-| **Lakehouses** | Systems that store huge datasets cheaply and query them fast | The storage layer every AI company eventually needs |
-| **AI memory** | Systems that let AI assistants remember past conversations | The difference between a chatbot and an assistant that knows you |
-| **Hybrid RAM** | Vector indexes — fast similarity search held in memory | The retrieval step inside almost every AI product |
-| **Object storage** | Cheap bulk file storage in the cloud | The foundation everything else sits on |
+| **Self-hosted AI Apps vs SaaS AI Apps** | Run the orchestration yourself, or rent it | Whether AI tooling gets owned by the user or rented per-seat |
+| **Temporal Memory & Context** | Remembering what changed, or just recalling text | The difference between a chatbot and an assistant that knows you |
+| **Retrieval Strategy** | Joins · hops · keywords · vectors · column scans | Five ways to find the right data, all competing for the same job |
+| **Where Durable State Lives** | Local disk · object store · managed cloud | Where the bytes physically sit, and what that costs |
+| **Open Format vs Integrated Platform** | Assemble from open parts, or buy one vendor's box | Who ends up owning the data stack |
+
+> **Note on pillar 1:** the self-hosted side is directly measurable (npm/PyPI
+downloads). The SaaS side mostly is not — GHL, Monday and Zapier publish no
+counts. Only IDE extensions have public install numbers. Until a SaaS data
+source is added, the SaaS side is shown as a flat baseline with that caveat
+visible in the UI.
 
 ---
 

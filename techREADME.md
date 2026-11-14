@@ -54,7 +54,7 @@ One JSON object per line. Every leg emits this exact shape.
   "node_id":     "string  — stable identity, source-native ID",
   "kind":        "string  — paper | model | repo | package | trademark",
   "name":        "string  — canonical display name",
-  "pillar":      "string  — graph-db | lakehouse | ai-memory | hybrid-ram | object-storage",
+  "pillar":      "string  — self-hosted-vs-saas | temporal-memory | retrieval-engines | data-persistence | stack-structure",
   "source":      "string  — arxiv | huggingface | github | openalex | pypi | uspto",
   "raw_attrs":   "object  — source-specific fields, passthrough",
   "ingested_at": "string  — ISO 8601 UTC"
@@ -125,9 +125,9 @@ All five daily legs converge: `Validate ×5 → Merge(append, 5 inputs) → Gate
 
 Code node, 5 items. Only place to change queries.
 
-**Pillar set locked 2026-11-12** (see §5.9). The `keyword` / `hf` / `pypi` values
-below are the *current* runtime values and still reflect the old categories —
-they are scheduled for rewrite. The `pillar` ids are the new ones.
+**Pillar set locked 2026-11-14 and applied.** This node is the only input; it
+writes `pillars.json` at runtime (gitignored). Never edit `pillars.json` — it is
+an output. Rationale: `pillars_research_11_14_2026.md`; details §5.9.
 
 ```js
 { pillar: 'self-hosted-vs-saas', keyword: 'self-hosted AI',  hf: 'gguf',      pypi: ['ollama','llama-cpp-python','open-webui','langchain'] },
@@ -148,6 +148,12 @@ Notes on the rewrite:
   rather than separate pillars.
 - `self-hosted-vs-saas` is the only pillar whose cloud side is not directly
   observable. See §5.9 for the measurement caveat.
+- **`pypi` must be PyPI-native.** The pipeline has no npm leg, so `n8n` (492/mo)
+  and `openclaw` (1,624/mo) are excluded despite being the headline self-hosted
+  apps — their real traffic is npm. Adding an npm leg is the fix, not padding the
+  list with stubs.
+- `Pillar Keywords1` (disabled, USPTO Historical) carries an identical copy of
+  this list. Keep the two in sync.
 
 | Field | Consumed by | Constraint |
 |---|---|---|

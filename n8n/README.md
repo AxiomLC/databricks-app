@@ -41,17 +41,20 @@ Cron · USPTO Hist 1st 03:00 ──► USPTO Historical Products → Pick Latest
 
 ```js
 const PILLARS = [
-  { pillar: 'graph-db',       keyword: 'graph database', hf: 'graph',     pypi: ['neo4j','kuzu','falkordb','memgraph','gremlinpython'] },
-  { pillar: 'lakehouse',      keyword: 'lakehouse',      hf: 'lakehouse', pypi: ['deltalake','pyiceberg','duckdb','lance'] },
-  { pillar: 'ai-memory',      keyword: 'agent memory',   hf: 'memory',    pypi: ['letta','mem0ai','zep-python','langmem'] },
-  { pillar: 'hybrid-ram',     keyword: 'vector index',   hf: 'vector',    pypi: ['faiss-cpu','usearch','hnswlib','annoy'] },
-  { pillar: 'object-storage', keyword: 'object storage', hf: 'storage',   pypi: ['boto3','minio','pyarrow','obstore'] },
+  { pillar: 'self-hosted-vs-saas', keyword: 'self-hosted AI', hf: 'gguf',      pypi: ['ollama','llama-cpp-python','open-webui','langchain'] },
+  { pillar: 'temporal-memory',     keyword: 'agent memory',  hf: 'memory',    pypi: ['mem0ai','zep-python','langmem','graphiti-core'] },
+  { pillar: 'retrieval-engines',   keyword: 'approximate nearest neighbor', hf: 'graph', pypi: ['neo4j','kuzu','falkordb','memgraph','gremlinpython','faiss-cpu','usearch','hnswlib','annoy','qdrant-client','lancedb'] },
+  { pillar: 'data-persistence',    keyword: 'object storage', hf: 'storage',  pypi: ['obstore','minio','s3fs','fsspec','cloudpathlib','smart-open'] },
+  { pillar: 'stack-structure',     keyword: 'lakehouse',     hf: 'lakehouse', pypi: ['deltalake','pyiceberg','duckdb','pyarrow','openlineage-python','databricks-sdk'] },
 ];
 ```
 
+This node writes `pillars.json` at runtime. That file is an **output** — never
+edit it. `Pillar Keywords1` (disabled, USPTO Historical) holds an identical copy.
+
 | Field | Consumed by |
 |---|---|
-| `keyword` | arXiv (`all:"..."`), GitHub (`q=`), OpenAlex (`default.search:`) |
+| `keyword` | arXiv (`all:"..."`), GitHub (`q=`), OpenAlex (`title.search:"..."`) |
 | `hf` | Hugging Face — **must be one word**, `search=` ignores phrases |
 | `pypi` | fanned out per package by `Flatten PyPI Packages` |
 
