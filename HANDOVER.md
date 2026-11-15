@@ -109,7 +109,62 @@ right or is useful — that needs eyes.
 4. Setup and Logs are read-only placeholders — worth wiring, or cut?
 
 **Not wired:** pillar editing, per-leg ingest toggles, cron toggle, validation
-failures in Logs, Genie Ask + Lineage.
+failures in Logs, Genie Conversation API.
+
+### Graph Explorer — two engines, two panels
+
+**Engines.** Toolbar toggle between **Cytoscape** (fcose, one-shot layout) and
+**Force Graph** (`react-force-graph-2d`, live d3 simulation). Both render the same
+neutral model built in `views/graphModel.js`, so adding a third engine is one new
+renderer file. Force Graph is `React.lazy`-loaded — a 206 kB chunk fetched only on
+first toggle.
+
+**Params modal** exposes each engine's own knobs (fcose: repulsion, edge length,
+gravity, iterations; d3: charge, link distance, velocity decay, alpha decay,
+cooldown). Schemas live in `graphModel.js`.
+
+**Labels in force-graph work.** `nodeLabel` is only a hover tooltip; real text
+comes from `nodeCanvasObject`. Modes: none / hubs only / all.
+
+**Panels.** `Genie | graph | Viewer`, both side panels toggleable.
+
+- **Viewer (right)** is a state timeline, not booleans — kinds `node`, `results`,
+  `genie`. Dedupe, forward-truncate on push-after-Back, cap 50, Back never
+  re-runs a query. `⛶` toggles 330px ↔ 46%.
+- **Search bar** filters the *visible* graph by label substring — local, instant,
+  no backend. It cannot see nodes hidden by the pillar filter or date slider.
+
+### Genie — iframe now, API later
+
+**Current state: iframe only.** The left panel renders a Genie Agent via
+`<iframe>`. The embed `src` is pasted from the agent's **Share → Embed space**
+dialog and stored in `localStorage` (⚙ button in the panel header).
+
+**Two blockers, both real:**
+
+1. **A workspace admin must allowlist the origin** — Settings → Security →
+   External access → Embed dashboards. The allowlist is **empty by default**, so
+   the frame renders blank no matter how correct the `src` is. This is the #1
+   cause of "it doesn't work".
+2. **The iframe is cross-origin, so its contents are unreadable.** Genie's answer
+   cannot be lifted out of the frame into the Viewer. The `genie` Viewer state
+   exists and renders, but **nothing produces it yet**.
+
+**To pipe answers into the Viewer you need the Genie Conversation API**
+(stateful, returns generated SQL + results). That requires a backend to hold
+credentials — i.e. the Databricks App direction, not the static SPA.
+
+**Untested:** whether Genie can generate correct **recursive CTEs** for multi-hop
+traversal over `silver_edges`. SQL traversal itself is fine (Databricks supports
+`WITH RECURSIVE`, `MAX RECURSION LEVEL` default 100, 1M row cap) and 2,796 edges
+is trivially small. The open question is NL→SQL reliability on recursion, not
+capability. Test with three prompts: an aggregate over Gold, a one-hop edge
+query, and a path trace.
+
+**Also worth knowing:** the graph reads **Silver** (`silver_nodes` +
+`silver_edges`), not Gold. Gold feeds the Momentum Board charts. Genie pointed at
+Gold answers momentum questions; pointed at Silver it answers entity/edge
+questions. Different tabs, different tables.
 
 ## ⚠️ Daily reminder — ingest on a new day
 
@@ -141,6 +196,7 @@ first day Silver ran (2026-11-11).
 | Item | Action |
 |---|---|
 | `Webhook · temp-debug` | testing scaffold — remove when done, then `cleanStaleConnections` |
+| `ui/.shot.mjs` | screenshot harness — keep, documented in `techREADME.md` §7.4 |
 | `TEMP CRON` | enabled alongside the disabled daily cron — **fires every 27 days, not daily** |
 | `Write Error to UI` | disabled placeholder, no URL — the HITL/error feed target |
 | `READ ME` sticky note | still lists old pillar ids and the 55 MB figure |
@@ -199,6 +255,17 @@ first day Silver ran (2026-11-11).
   a component comes from `nodeRepulsion` and `idealEdgeLength`.
 - **Port is pinned to 5180** with `strictPort: true`. `npm run dev -- --port 5180`
   does not work — npm swallows the flag.
+- **Cytoscape `wheelSensitivity: 3.8`** — measured, not guessed. At the default
+  1.0 a mouse notch only zooms 1.047×; force-graph does 1.181×. 3.8 brings them
+  within 1%. Cytoscape logs a cosmetic warning about non-default values; parity
+  is worth more than a clean console.
+- **`force-graph` needs `d3-force-3d`**, not `d3-force`. Wrong import gives you
+  forces that silently never attach.
+- **force-graph stops painting when the simulation cools** — call
+  `fgRef.current.refresh()` when paint-affecting params change, or label edits
+  never reach the canvas.
+- **The Genie iframe is cross-origin.** You cannot read its contents. Answers
+  reach the Viewer only via the Conversation API.
 
 ### Environment
 

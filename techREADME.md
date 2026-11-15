@@ -577,7 +577,7 @@ Postgres) is the serving copy.
 
 ## 7. UI (AppKit / React)
 
-Scaffolded in `ui/`, not built. Port `8050`.
+Built in `ui/`, renders real data from a snapshot. Port `5180` (`strictPort`).
 
 **Rendering stack:** **Cytoscape.js** for the graph — locked. Plain JS, no
 Databricks dependency, runs inside a Databricks App. Databricks itself ships no
@@ -614,8 +614,111 @@ What earns its place:
 node. If a user cannot answer "which pillar is accelerating" in under 10 seconds,
 the graph failed.
 
-**Blocker:** `silver_edges` is unbuilt, so there is nothing to draw yet. The graph
-UI is blocked on edges, not on the rendering choice.
+**Status:** `silver_edges` is built (2,796 rows, 5 edge types) and the graph renders
+it. The remaining question is whether the result is *useful*, not whether it can be
+drawn.
+
+### 7.2.1 Two renderers, one model
+
+Graph Explorer can render with either engine, toggled in the toolbar:
+
+| Engine | Library | Physics | Notes |
+|---|---|---|---|
+| Cytoscape | `cytoscape` + `cytoscape-fcose` | fcose (single-shot, deterministic) | Original. Best layout quality; no live physics |
+| Force Graph | `react-force-graph-2d` | `d3-force-3d` (live simulation) | Draggable nodes, live settling, canvas-painted labels |
+
+**The split is deliberate.** `views/graphModel.js` builds a neutral
+`{ nodes, links }` model from the snapshot; `CytoscapeGraph.jsx` and
+`ForceGraphView.jsx` are pure renderers over it. Data shaping happens once, so
+adding a third engine (Sigma.js, Cosmograph) means one new renderer file and no
+changes to filtering or momentum logic.
+
+**Parameters.** Each engine declares its own knob schema in `graphModel.js`
+(`CY_SCHEMA`, `FG_SCHEMA`) with defaults alongside (`CY_DEFAULTS`, `FG_DEFAULTS`).
+`ParamModal.jsx` is generic — it renders whatever schema it is handed. The two
+sets are not comparable: fcose is a one-shot solver (repulsion, edge length,
+gravity, iterations), d3 is a live simulation (charge, link distance, velocity
+decay, alpha decay, cooldown).
+
+**Labels in force-graph.** `nodeLabel` is only a hover tooltip. Real per-node text
+requires `nodeCanvasObject`, which hands you the raw 2D context — so the renderer
+paints the disc, the stroke halo, and the text itself. Label modes: `none`
+(hover only), `hubs` (pillar hubs only, the default), `all`. `labelMinZoom` gates
+them by zoom; keep it low (0.35) because the fit zoom for ~180 nodes is well under
+1.0 and a higher floor hides every label on first paint.
+
+**Lazy loading.** `ForceGraphView` is `React.lazy`-loaded, so the ~206 kB
+force-graph chunk is fetched only when the engine is first selected. Cytoscape
+sessions never download it. Verified: no chunk request until the toggle is used.
+
+**Zoom speed — measured, not guessed.** The two engines do not zoom at the same
+rate per wheel notch, and the gap is large:
+
+| `wheelSensitivity` | Cytoscape per notch | Force Graph per notch |
+|---|---|---|
+| `0.2` | 1.009× | 1.181× |
+| `1.0` (default) | 1.047× | 1.181× |
+| **`3.8` (current)** | **1.191×** | **1.181×** |
+
+Cytoscape's `isWheelNotch` path divides the delta by `inaccurateScrollFactor`,
+which throttles genuine mouse notches — so the default feels sluggish next to
+force-graph. `3.8` brings them within 1% of each other. Cytoscape logs a
+cosmetic warning about non-default wheel sensitivity; parity is worth more than
+the clean console. If you change one engine's zoom feel, re-measure both.
+
+**Two gotchas found while wiring this:**
+
+- `force-graph` depends on **`d3-force-3d`**, not `d3-force`. Importing `forceX`
+  from the wrong package silently gives you forces that never attach.
+- force-graph **stops painting once the simulation cools**, so a label-only param
+  change never reaches the canvas. Call `fgRef.current.refresh()` when
+  paint-affecting params change.
+
+**Edge count bug (fixed).** The old counter used `data.source !== undefined` to
+detect edges, but entity *nodes* also carry a `source` field — so it reported
+nodes + edges (414) instead of edges (235).
+
+### 7.2.2 Panels — Genie (left) and Viewer (right)
+
+The stage is three columns: `Genie | graph | Viewer`. Both side panels toggle
+from the toolbar; the graph takes whatever width is left.
+
+**Viewer is a state timeline, not a set of booleans.** Modelled on the Frontal
+Lobe Viewer. Three state kinds:
+
+| Kind | Payload | Produced by |
+|---|---|---|
+| `node` | one entity or hub | graph click, result-row click |
+| `results` | query + matching rows | search bar (Enter) |
+| `genie` | question + answer + SQL | Genie Conversation API (not wired) |
+
+Rules: consecutive duplicate node clicks dedupe; a push after Back truncates the
+forward path; capped at 50; Back is pure state restore and never re-runs a query
+or moves the graph. Selecting a result row calls `onNavigate`, which asks the
+active renderer to `focus(id)` and then pushes a `node` state.
+
+**Search is local and instant.** It filters the *currently visible* graph by
+label substring — no backend, no embeddings. It cannot find nodes filtered out
+by the pillar selector or the date slider. Semantic search would need embeddings
+in the pipeline; Cypher would need a graph database. Neither exists.
+
+**Genie is an iframe, and that is a hard limit.** The panel renders the Genie
+Agent via `<iframe>`, with the embed `src` pasted from the agent's
+**Share → Embed space** dialog and kept in `localStorage`.
+
+Two constraints that decide the architecture:
+
+1. **A workspace admin must allowlist the embedding origin** (Settings → Security
+   → External access → Embed dashboards). The allowlist is empty by default, so
+   the frame renders blank until that is done — regardless of how correct the
+   `src` is.
+2. **The iframe is cross-origin, so its contents are unreadable.** Genie's answer
+   cannot be lifted out of the frame and into the Viewer. Piping answers into the
+   Viewer requires the **Genie Conversation API** (stateful, returns generated
+   SQL + results), which needs a backend to hold credentials.
+
+So the `genie` Viewer state exists and renders, but nothing produces it yet. That
+is the seam where the Conversation API plugs in.
 
 ### 7.3 Charts, AI access, and controls
 
@@ -627,6 +730,41 @@ UI is blocked on edges, not on the rendering choice.
 | **Cron toggle** | Enable/disable the daily schedule without editing the workflow |
 | **Logs** | Execution history, validation failures, gate decisions |
 | **Setup / Pillars** | User-editable pillar list and keywords — writes `pillars.json` |
+
+### 7.4 Screenshot harness — how an agent sees the UI
+
+`ui/.shot.mjs` is a Playwright script that captures the running UI. It exists so a
+coding agent can look at the rendered page instead of guessing from source.
+
+**Prerequisites:** dev server up (`cd ui && npm run dev`, port 5180), and Playwright
+installed globally at `C:/Users/q1fre/node_modules/playwright` (v1.52, chromium
+bundled). The script imports it by absolute `file:///` URL because it lives outside
+the project's `node_modules`.
+
+```bash
+node ui/.shot.mjs                    # writes to %TEMP%
+node ui/.shot.mjs C:/path/to/dir     # writes to a chosen directory
+```
+
+It captures two PNGs — `shot-board.png` (default tab) and `shot-graph.png` (after
+clicking **Graph Explorer**, with a 6 s settle for the fcose layout) — and prints
+canvas dimensions, visible body text, and all console messages as JSON.
+
+**Reading the result depends on the agent's model:**
+
+| Agent capability | Tools |
+|---|---|
+| **Vision-capable** | `read_file` on the PNG — returns the image as visual content. Copy it into the project first (e.g. `.shots/`), since `read_file` cannot reach `%TEMP%`. |
+| **Text-only** | No pixel access. Use the JSON the script prints (console errors, body text, canvas size) plus DOM geometry checks via `page.evaluate` — bounding-box overlap, clipping, computed styles, contrast ratios. |
+
+A text-only agent can still catch real defects this way: the harness surfaced two
+Cytoscape warnings on first run — an invalid `node[type="entity"]:hover` selector
+and a non-default `wheelSensitivity`.
+
+**Reading the graph screenshot:** the pillar dropdown defaults to the first pillar
+(`PILLARS[0].id`), so the graph shows ~179 nodes / ~414 edges, not the full
+snapshot. That is intended — 1,015 nodes at once is an unreadable blob. Select
+**All pillars** to see the whole graph, or pass a different default in the script.
 
 ---
 
