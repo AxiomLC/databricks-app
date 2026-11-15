@@ -21,6 +21,18 @@ const ENGINES = [
   { id: 'forcegraph', label: 'Force Graph' },
 ]
 
+/** Read a JSON object from localStorage, tolerating absent/corrupt values. */
+function readStored(key) {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return {}
+    const v = JSON.parse(raw)
+    return v && typeof v === 'object' ? v : {}
+  } catch {
+    return {}
+  }
+}
+
 export default function GraphExplorer({ snapshot }) {
   const [engine, setEngine] = useState('cytoscape')
   const [selected, setSelected] = useState(null)
@@ -41,8 +53,24 @@ export default function GraphExplorer({ snapshot }) {
   const graphApiRef = useRef(null)
 
   // Each engine keeps its own parameter set — the knobs are not comparable.
-  const [cyParams, setCyParams] = useState(CY_DEFAULTS)
-  const [fgParams, setFgParams] = useState(FG_DEFAULTS)
+  // Params persist across reloads. Merged over the defaults so a newly added
+  // knob still gets its default value instead of being undefined.
+  const [cyParams, setCyParams] = useState(() => ({
+    ...CY_DEFAULTS,
+    ...readStored('momentum_cy_params'),
+  }))
+  const [fgParams, setFgParams] = useState(() => ({
+    ...FG_DEFAULTS,
+    ...readStored('momentum_fg_params'),
+  }))
+
+  useEffect(() => {
+    localStorage.setItem('momentum_cy_params', JSON.stringify(cyParams))
+  }, [cyParams])
+
+  useEffect(() => {
+    localStorage.setItem('momentum_fg_params', JSON.stringify(fgParams))
+  }, [fgParams])
 
   const dates = useMemo(() => {
     const s = new Set()

@@ -1,3 +1,8 @@
+/* Theme tokens. The app defaults to dark; `body.light` swaps the palette.
+   Dark: dark green + deep yellow highlights. Light: neon blue + light orange.
+   Every surface uses a var — hardcoded colors outside this block are rare and
+   deliberate (Genie panel keeps its light constants in BOTH themes because the
+   Databricks iframe paints light with black text; see .genie-panel). */
 :root {
   --bg: #0b0e14;
   --panel: #131822;
@@ -5,10 +10,35 @@
   --border: #232c3d;
   --text: #e6edf7;
   --muted: #8b98ad;
-  --accent: #4f8ef7;
+  --accent: #22c55e;
+  --accent-2: #d9a406;
   --up: #10b981;
   --down: #ef4444;
   --radius: 10px;
+  /* Medium grey short glow around buttons (dark theme). */
+  --btn-glow: 0 0 6px rgba(160, 170, 185, 0.35);
+  /* The chart canvas is painted by JS with fixed colors — graph ink. */
+  --canvas-text: #e6edf7;
+  --canvas-grid: rgba(139, 152, 173, 0.18);
+}
+
+body.light {
+  --bg: #f3f4f6;
+  --panel: #e7e9ee;
+  --panel-2: #d9d9de;
+  --border: #b9bfc9;
+  --text: #1a1d22;
+  --muted: #5b6270;
+  /* Neon blue is reserved for the selected-glow only; thin border lines are
+     plain black in the light theme. */
+  --accent: #00b4ff;
+  --accent-2: #000000;
+  --up: #10b981;
+  --down: #ef4444;
+  /* Neon blue short glow around buttons (light theme). */
+  --btn-glow: 0 0 6px rgba(0, 180, 255, 0.45);
+  --canvas-text: #1a1d22;
+  --canvas-grid: rgba(91, 98, 112, 0.2);
 }
 
 * { box-sizing: border-box; }
@@ -33,6 +63,13 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+}
+
+/* Accent glow on SELECTED/active buttons only — standard buttons stay plain. */
+.btn.primary,
+.engine-btn.active,
+.tab.active {
+  box-shadow: var(--btn-glow);
 }
 
 /* ---------- layout ---------- */
@@ -85,7 +122,9 @@ button {
 .tab.active {
   background: var(--panel-2);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  /* selected tab keeps the theme accent glow */
+  outline: none;
 }
 
 .spacer { flex: 1; }
@@ -139,6 +178,27 @@ button {
   color: var(--muted);
 }
 
+/* ---------- theme toggle (topbar) ---------- */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ---------- momentum board ---------- */
 
 .board {
@@ -182,7 +242,14 @@ button {
   border-radius: var(--radius);
   background: var(--panel);
   border: 1px solid var(--border);
+  /* Thin accent border — the highlight system: primary on cards' leading edge,
+     secondary on hover. */
   border-left: 3px solid var(--accent);
+}
+
+.pillar-card:hover {
+  border-color: var(--accent-2);
+  border-left-color: var(--accent-2);
 }
 
 .pillar-card h3 {
@@ -224,7 +291,7 @@ table.data th {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--accent-2);
   position: sticky;
   top: 0;
   background: var(--bg);
@@ -232,7 +299,7 @@ table.data th {
 
 table.data td {
   padding: 7px 8px;
-  border-bottom: 1px solid rgba(35, 44, 61, 0.5);
+  border-bottom: 1px solid var(--border);
 }
 
 table.data tr:hover td { background: var(--panel); }
@@ -255,10 +322,16 @@ table.data td.num {
   height: 100%;
 }
 
-/* Three-column stage: Genie | graph | Viewer. The graph takes what is left. */
+/* Three-column stage: Genie | graph | Viewer. The graph takes what is left.
+   Top starts BELOW the floating toolbar (top: 16px + its own height + 16px
+   gap) so the panels never slide under it — same 16px gutter as the toolbar
+   itself. */
 .graph-stage {
   position: absolute;
-  inset: 0;
+  top: 88px;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: stretch;
 }
@@ -272,23 +345,39 @@ table.data td.num {
 
 /* ---------- Genie panel (left) ---------- */
 
+/* The Genie iframe renders Databricks' own chrome, which is light-themed with
+   hardcoded black text (no theme parameter exists for the embed). Our panel
+   chrome is deliberately LIGHT so the frame's content reads as intentional
+   rather than as a dark hole with unreadable output. Do not "fix" this back to
+   the app's dark vars without re-checking the iframe's actual colors. */
 .genie-panel {
-  width: 340px;
+  /* Two fixed widths, toggled from the head bar. */
+  width: 440px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
+  transition: width 0.18s ease; /* content reflows instead of being clipped */
+  /* Light constants in BOTH themes because the Databricks iframe paints light
+     with black text; see the note above. The theme accents (border stripes)
+     below are what tie it to the active theme. */
+  background: #dfe3e9;
+  border-right: 2px solid var(--accent-2);
   z-index: 12;
+}
+
+.genie-panel.wide {
+  width: 640px;
 }
 
 .genie-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  /* Left padding trimmed ~30% (12 -> 8); right matches. */
+  padding: 10px 8px;
+  border-bottom: 2px solid var(--accent-2);
   flex-shrink: 0;
+  background: #c2c8d2;
 }
 
 .genie-title {
@@ -296,7 +385,7 @@ table.data td.num {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted);
+  color: #3d434c;
 }
 
 .genie-actions {
@@ -329,13 +418,16 @@ table.data td.num {
   flex: 1;
   width: 100%;
   border: none;
-  background: #0b0f16;
+  /* A shade of the head bar, not near-white — the iframe paints its own
+     content and this is what shows behind/around it while loading. */
+  background: #dfe3e9;
 }
 
 .genie-config {
-  padding: 14px;
+  /* Left padding trimmed ~30% (14 -> 10); right matches. */
+  padding: 14px 10px;
   font-size: 12px;
-  color: var(--muted);
+  color: #3d434c;
   overflow-y: auto;
 }
 
@@ -353,9 +445,9 @@ table.data td.num {
 .genie-config textarea {
   width: 100%;
   box-sizing: border-box;
-  background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--border);
+  background: #ffffff;
+  color: #1a1d22;
+  border: 1px solid var(--accent);
   border-radius: 6px;
   padding: 8px;
   font-family: ui-monospace, monospace;
@@ -377,7 +469,7 @@ table.data td.num {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--muted);
+  color: #3d434c;
   font-size: 12px;
   text-align: center;
   padding: 20px;
@@ -388,9 +480,9 @@ table.data td.num {
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  background: var(--panel);
-  color: var(--muted);
-  border: 1px solid var(--border);
+  background: #dfe3e9;
+  color: #3d434c;
+  border: 1px solid var(--accent);
   border-left: none;
   border-radius: 0 6px 6px 0;
   padding: 12px 6px;
@@ -408,21 +500,21 @@ table.data td.num {
   display: flex;
   flex-direction: column;
   background: var(--panel);
-  border-left: 1px solid var(--border);
+  border-left: 2px solid var(--accent-2);
   z-index: 12;
   transition: width 0.18s ease;
 }
 
-.viewer.full {
-  width: 46%;
-}
 
 .viewer-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  /* Matches the Genie head bar exactly: same fill, same bottom rule, no top
+     border. Both panels read as a pair. */
+  padding: 10px 8px;
+  background: #c2c8d2;
+  border-bottom: 2px solid var(--accent-2);
   flex-shrink: 0;
 }
 
@@ -431,7 +523,7 @@ table.data td.num {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted);
+  color: #3d434c;
   flex: 1;
 }
 
@@ -443,8 +535,20 @@ table.data td.num {
 
 .viewer-depth {
   font-size: 10px;
-  color: var(--muted);
+  color: #3d434c;
   font-family: ui-monospace, monospace;
+}
+
+/* Buttons sitting on the light head bar need dark ink, not the theme's muted. */
+.viewer-head .mini-btn,
+.genie-head .mini-btn {
+  color: #3d434c;
+}
+
+.viewer-head .mini-btn:hover:not(:disabled),
+.genie-head .mini-btn:hover:not(:disabled) {
+  color: #1a1d22;
+  border-color: #8d95a3;
 }
 
 .viewer-body {
@@ -469,7 +573,11 @@ table.data td.num {
   margin: 0 0 2px;
   font-size: 14px;
   font-weight: 600;
+  /* Full name, wrapped as needed — the Viewer has room the canvas does not. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   word-break: break-word;
+  line-height: 1.35;
 }
 
 .viewer-kind {
@@ -517,7 +625,7 @@ table.data td.num {
   text-align: left;
   background: transparent;
   border: none;
-  border-bottom: 1px solid rgba(43, 54, 72, 0.5);
+  border-bottom: 1px solid var(--border);
   padding: 8px 6px;
   cursor: pointer;
   color: var(--text);
@@ -588,7 +696,7 @@ table.data td.num {
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
-  background: rgba(19, 24, 34, 0.94);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   backdrop-filter: blur(8px);
@@ -659,9 +767,10 @@ table.data td.num {
 }
 
 .engine-btn.active {
-  background: var(--accent);
-  color: #0b0f16;
+  background: var(--panel-2);
+  color: var(--text);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* ---------- parameter modal ---------- */
@@ -722,7 +831,7 @@ table.data td.num {
   justify-content: space-between;
   gap: 16px;
   padding: 9px 0;
-  border-bottom: 1px solid rgba(43, 54, 72, 0.5);
+  border-bottom: 1px solid var(--border);
 }
 
 .param-row:last-child {
@@ -795,14 +904,16 @@ table.data td.num {
 }
 
 .btn:hover {
-  border-color: var(--accent);
+  border-color: var(--muted);
 }
 
+/* Selected = accent border + glow, NOT a solid fill. The fill visually swamps
+   the glow; selection should read as a halo, not a paint bucket. */
 .btn.primary {
-  background: var(--accent);
-  color: #0b0f16;
+  background: var(--panel-2);
   font-weight: 600;
   border-color: var(--accent);
+  color: var(--text);
 }
 
 .legend {
@@ -810,7 +921,7 @@ table.data td.num {
   bottom: 16px;
   left: 16px;
   padding: 12px 14px;
-  background: rgba(19, 24, 34, 0.94);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: 12px;
@@ -854,7 +965,7 @@ table.data td.num {
   max-height: calc(100% - 106px);
   overflow-y: auto;
   padding: 16px;
-  background: rgba(19, 24, 34, 0.97);
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   z-index: 10;
@@ -881,7 +992,7 @@ table.data td.num {
   justify-content: space-between;
   gap: 12px;
   padding: 5px 0;
-  border-bottom: 1px solid rgba(35, 44, 61, 0.5);
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
 
@@ -901,7 +1012,7 @@ table.data td.num {
   font-size: 11px;
   margin: 0 4px 4px 0;
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent-2);
 }
 
 .close-btn {
@@ -975,4 +1086,4 @@ table.data td.num {
 }
 
 .badge.ok { color: var(--up); border-color: rgba(16, 185, 129, 0.3); }
-.badge.warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.3); }
+.badge.warn { color: var(--accent-2); border-color: var(--accent-2); }

@@ -19,10 +19,15 @@ import React, { useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'momentum_genie_embed_src'
 
+const WIDE_KEY = 'momentum_genie_wide'
+
 export default function GeniePanel({ open, onToggle }) {
   const [src, setSrc] = useState('')
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  // Two fixed sizes. The iframe is cross-origin, so its content width cannot be
+  // measured — the wide preset is the substitute for auto-fitting.
+  const [wide, setWide] = useState(() => localStorage.getItem(WIDE_KEY) === '1')
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY) || ''
@@ -30,6 +35,10 @@ export default function GeniePanel({ open, onToggle }) {
     setDraft(saved)
     setEditing(!saved)
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem(WIDE_KEY, wide ? '1' : '0')
+  }, [wide])
 
   const save = () => {
     const v = draft.trim()
@@ -47,10 +56,17 @@ export default function GeniePanel({ open, onToggle }) {
   }
 
   return (
-    <div className="genie-panel">
+    <div className={`genie-panel${wide ? ' wide' : ''}`}>
       <div className="genie-head">
         <span className="genie-title">Genie</span>
         <div className="genie-actions">
+          <button
+            className="mini-btn"
+            onClick={() => setWide((v) => !v)}
+            title={wide ? 'Narrow panel' : 'Widen panel'}
+          >
+            {wide ? '⇥' : '⇤'}
+          </button>
           <button className="mini-btn" onClick={() => setEditing((v) => !v)} title="Configure embed">
             ⚙
           </button>

@@ -27,7 +27,6 @@ const CAP = 50
 
 export default function Viewer({ push, onNavigate, currentDate, onClose }) {
   const [hist, setHist] = useState({ stack: [], idx: -1 })
-  const [full, setFull] = useState(false)
 
   // App-initiated pushes (graph click, result-row select, Genie answer).
   useEffect(() => {
@@ -61,13 +60,10 @@ export default function Viewer({ push, onNavigate, currentDate, onClose }) {
 
   if (!current) {
     return (
-      <div className={`viewer${full ? ' full' : ''}`}>
+      <div className="viewer">
         <div className="viewer-head">
           <span className="viewer-title">Viewer</span>
           <div className="viewer-actions">
-            <button className="mini-btn" onClick={() => setFull((v) => !v)} title="Toggle width">
-              ⛶
-            </button>
             {onClose && (
               <button className="mini-btn" onClick={onClose} title="Hide">
                 ×
@@ -83,7 +79,7 @@ export default function Viewer({ push, onNavigate, currentDate, onClose }) {
   }
 
   return (
-    <div className={`viewer${full ? ' full' : ''}`}>
+    <div className="viewer">
       <div className="viewer-head">
         <button
           className="mini-btn"
@@ -106,9 +102,6 @@ export default function Viewer({ push, onNavigate, currentDate, onClose }) {
           <span className="viewer-depth">
             {hist.idx + 1}/{hist.stack.length}
           </span>
-          <button className="mini-btn" onClick={() => setFull((v) => !v)} title="Toggle width">
-            ⛶
-          </button>
           {onClose && (
             <button className="mini-btn" onClick={onClose} title="Hide">
               ×
@@ -142,7 +135,7 @@ function NodeView({ node, momentum, currentDate }) {
   if (node.type === 'hub') {
     return (
       <>
-        <h3 className="viewer-h3">{node.label}</h3>
+        <h3 className="viewer-h3">{node.fullLabel || node.label}</h3>
         <div className="viewer-kind">pillar hub</div>
         <div className="kv">
           <span className="k">Entities</span>
@@ -158,7 +151,7 @@ function NodeView({ node, momentum, currentDate }) {
 
   return (
     <>
-      <h3 className="viewer-h3">{node.label}</h3>
+      <h3 className="viewer-h3">{node.fullLabel || node.label}</h3>
       <div className="viewer-kind">
         {node.kind} · {node.source}
       </div>

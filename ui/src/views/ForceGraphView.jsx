@@ -16,6 +16,9 @@ export default function ForceGraphView({ graph, params, onSelect, apiRef }) {
   const containerRef = useRef(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [hovered, setHovered] = useState(null)
+  // Node reached via a search result — painted with a bright halo so it is
+  // findable at fit zoom, where a 7px disc is otherwise invisible.
+  const [focusId, setFocusId] = useState(null)
 
   // Viewport sizing — the canvas needs explicit pixel dims, not 100%.
   useEffect(() => {
@@ -66,12 +69,44 @@ export default function ForceGraphView({ graph, params, onSelect, apiRef }) {
   // change would never reach the canvas. Force one repaint.
   useEffect(() => {
     fgRef.current?.refresh?.()
-  }, [params.labelMode, params.labelSize, params.labelMinZoom, params.nodeScale])
+  }, [params.labelMode, params.labelSize, params.labelMinZoom, params.nodeScale, focusId])
+
+  // Canvas ink follows the active theme. force-graph paints outside the DOM,
+  // so CSS vars don't reach it — read them off the body each render.
+  const canvasColors = useMemo(() => {
+    const cs = getComputedStyle(document.body)
+    return {
+      text: cs.getPropertyValue('--canvas-text').trim() || '#e6edf7',
+      muted: cs.getPropertyValue('--muted').trim() || '#8b98ad',
+      halo: cs.getPropertyValue('--bg').trim() || '#0b0e14',
+    }
+  }, [])
 
   const paintNode = useCallback(
     (node, ctx, globalScale) => {
       const r = Math.max(1.5, (node.size / 2) * params.nodeScale)
       const isHovered = hovered && hovered.id === node.id
+
+      // Focus halo — light-yellow ring plus a yellow glow, drawn UNDER the disc.
+      // Radius is 1.5x the node (was 3x, which read as twice too large). The
+      // glow is a radial gradient at double the selected-button blur.
+      if (focusId && node.id === focusId) {
+        const haloR = r * 1.5
+        const glowR = haloR + 12
+        const grad = ctx.createRadialGradient(node.x, node.y, haloR, node.x, node.y, glowR)
+        grad.addColorStop(0, 'rgba(255, 224, 102, 0.55)')
+        grad.addColorStop(1, 'rgba(255, 224, 102, 0)')
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI)
+        ctx.fillStyle = grad
+        ctx.fill()
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, haloR, 0, 2 * Math.PI)
+        ctx.lineWidth = 1.25 / globalScale
+        ctx.strokeStyle = '#ffe066'
+        ctx.stroke()
+      }
 
       // Hub nodes are translucent rings; entities are solid discs.
       if (node.type === 'hub') {
@@ -94,7 +129,9 @@ export default function ForceGraphView({ graph, params, onSelect, apiRef }) {
         ctx.stroke()
       }
 
-      // Label visibility: mode, zoom floor, and hover always wins.
+      // ONE label path, painted BELOW the node. Hover does not change position
+      // or styling — it only bypasses the zoom gate so the label is readable
+      // when the graph is zoomed out. The gate is what makes labels static.
       const showByMode =
         params.labelMode === 'all' ||
         (params.labelMode === 'hubs' && node.type === 'hub')
@@ -105,18 +142,18 @@ export default function ForceGraphView({ graph, params, onSelect, apiRef }) {
       ctx.font = `${node.type === 'hub' ? 600 : 400} ${fontSize}px ui-sans-serif, system-ui, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = node.type === 'hub' ? 'middle' : 'top'
-      ctx.fillStyle = node.type === 'hub' ? '#e6edf7' : '#8b98ad'
+      ctx.fillStyle = node.type === 'hub' ? canvasColors.text : canvasColors.muted
 
       const text = node.label
       const y = node.type === 'hub' ? node.y : node.y + r + 2 / globalScale
 
       // Halo behind the text so it stays legible over edges.
       ctx.lineWidth = 3 / globalScale
-      ctx.strokeStyle = 'rgba(11, 15, 22, 0.85)'
+      ctx.strokeStyle = canvasColors.halo
       ctx.strokeText(text, node.x, y)
       ctx.fillText(text, node.x, y)
     },
-    [hovered, params.nodeScale, params.labelMode, params.labelSize, params.labelMinZoom]
+    [hovered, focusId, params.nodeScale, params.labelMode, params.labelSize, params.labelMinZoom, canvasColors]
   )
 
   // Hit area must match the painted radius, or clicks miss small nodes.
@@ -139,19 +176,30 @@ export default function ForceGraphView({ graph, params, onSelect, apiRef }) {
         const fg = fgRef.current
         const n = data.nodes.find((x) => x.id === id)
         if (!fg || !n || n.x == null) return
-        // Pull the camera back proportionally so the node is not clipped.
-        const PULLBACK = 120
-        const r = Math.max(Math.hypot(n.x, n.y), 1)
-        const f = 1 + PULLBACK / r
-        fg.cameraPosition({ x: n.x * f, y: n.y * f, z: 0 }, { x: n.x, y: n.y, z: 0 }, 700)
-        fg.zoom(2, 700)
+        // `cameraPosition` is 3D-only — the 2D build has no such method, so
+        // centring is done by panning to the node's graph coords, then zooming.
+        const { width, height } = dimensions
+        const zoom = Math.min(8, (fg.zoom() || 1) * 1.3)
+        fg.centerAt(n.x, n.y, 700)
+        fg.zoom(zoom, 700)
+        // Keep the node centred after the zoom settles (zoom is about the
+        // canvas centre, not the node).
+        setTimeout(() => fg.centerAt(n.x, n.y, 0), 720)
+        setFocusId(id)
       },
     }
-  }, [data, apiRef])
+  }, [data, apiRef, dimensions])
 
   const handleClick = useCallback(
     (node) => {
-      if (!node) return onSelect(null)
+      if (!node) {
+        setFocusId(null)
+        return onSelect(null)
+      }
+      // A direct graph click must halo the node too — Cytoscape does this via
+      // `node:selected`, but force-graph paints imperatively, so the selection
+      // has to be mirrored into state.
+      setFocusId(node.id)
       onSelect(node.type === 'hub' ? { hub: true, ...node } : { hub: false, ...node })
     },
     [onSelect]

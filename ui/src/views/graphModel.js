@@ -23,6 +23,26 @@ export function pillarHubId(pillar) {
   return `pillar:${pillar}`
 }
 
+const MAX_WORDS = 6
+const MAX_CHARS = 20
+
+/**
+ * Node labels are capped at 6 words and 20 characters. The char cap is applied
+ * to the word-capped string, so a single long token (a package name, a DOI-ish
+ * id) still cannot overflow the wrap width.
+ */
+export function truncateLabel(raw) {
+  if (!raw) return ''
+  const words = String(raw).trim().split(/\s+/)
+  let out = words.slice(0, MAX_WORDS).join(' ')
+  const wasWordCapped = words.length > MAX_WORDS
+  if (out.length > MAX_CHARS) {
+    out = out.slice(0, MAX_CHARS).trimEnd()
+    return `${out}…`
+  }
+  return wasWordCapped ? `${out}…` : out
+}
+
 export function buildGraph({
   snapshot,
   currentDate,
@@ -76,7 +96,11 @@ export function buildGraph({
 
     nodes.push({
       id: n.id,
-      label: n.label.length > 28 ? `${n.label.slice(0, 26)}…` : n.label,
+      // `label` is the canvas label — truncated at 6 words / 20 chars so it
+      // cannot blow out the wrap width. `fullLabel` is the untruncated name for
+      // surfaces with room to wrap (the Viewer).
+      label: truncateLabel(n.label),
+      fullLabel: n.label,
       type: 'entity',
       kind: n.kind,
       source: n.source,
@@ -131,6 +155,10 @@ export const CY_DEFAULTS = {
   gravity: 0.2,
   nodeSeparation: 75,
   numIter: 2500,
+  // Zoom applied after the layout fits the graph. `fit` shrinks until every
+  // node is visible, which at ~180 nodes puts neighbours closer than a node's
+  // diameter, so the view is pulled in by this factor afterwards.
+  zoomDistance: 1.8,
 }
 
 export const CY_SCHEMA = [
@@ -160,6 +188,14 @@ export const CY_SCHEMA = [
     hint: 'Only applies between disconnected components',
   },
   { key: 'numIter', label: 'Iterations', min: 500, max: 8000, step: 100 },
+  {
+    key: 'zoomDistance',
+    label: 'Zoom distance',
+    min: 0.5,
+    max: 4,
+    step: 0.1,
+    hint: 'How far the view pulls in after the layout fits',
+  },
 ]
 
 export const FG_DEFAULTS = {
@@ -171,7 +207,9 @@ export const FG_DEFAULTS = {
   cooldownTicks: 300,
   warmupTicks: 60,
   nodeScale: 1.6,
-  labelMode: 'hubs',
+  // 'all' so static labels actually exist for entities; the zoom gate decides
+  // when they appear, not the mode.
+  labelMode: 'all',
   labelSize: 10,
   // The fit zoom for ~180 nodes lands well under 1.0, so a higher floor hides
   // every label on first paint and looks like labels are broken.

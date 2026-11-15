@@ -16,6 +16,12 @@ export default function App() {
   const [tab, setTab] = useState('board')
   const [snapshot, setSnapshot] = useState(null)
   const [error, setError] = useState(null)
+  const [light, setLight] = useState(() => localStorage.getItem('momentum_theme') === 'light')
+
+  useEffect(() => {
+    document.body.classList.toggle('light', light)
+    localStorage.setItem('momentum_theme', light ? 'light' : 'dark')
+  }, [light])
 
   useEffect(() => {
     loadSnapshot().then(setSnapshot).catch((e) => setError(e.message))
@@ -46,6 +52,14 @@ export default function App() {
             {snapshot.edges.length.toLocaleString()} edges
           </div>
         )}
+        <button
+          className="theme-toggle"
+          onClick={() => setLight((v) => !v)}
+          title={light ? 'Switch to dark theme' : 'Switch to light theme'}
+          aria-label="Toggle color theme"
+        >
+          {light ? '☾' : '☀'}
+        </button>
       </header>
 
       <main className="main">

@@ -26,7 +26,7 @@ export default function CytoscapeGraph({ graph, params, onSelect, apiRef }) {
             'border-width': 2,
             'border-color': 'data(color)',
             label: 'data(label)',
-            color: '#e6edf7',
+            color: 'var(--canvas-text)',
             'font-size': 11,
             'font-weight': 600,
             'text-valign': 'center',
@@ -46,22 +46,48 @@ export default function CytoscapeGraph({ graph, params, onSelect, apiRef }) {
             height: 'data(size)',
             label: 'data(label)',
             color: '#8b98ad',
-            'font-size': 8,
+            // 30% smaller than the previous 8px.
+            'font-size': 5.6,
             'text-valign': 'bottom',
             'text-margin-y': 3,
-            'text-opacity': 0,
-            'min-zoomed-font-size': 0,
+            // Labels are ZOOM-GATED, not hover-only. Cytoscape skips text when
+            // `font-size * zoom` falls below `min-zoomed-font-size`, so at fit
+            // zoom the graph stays clean and labels appear as you zoom in.
+            // 13 = 9 * 1.3, i.e. labels appear 30% later than before.
+            'text-opacity': 1,
+            'min-zoomed-font-size': 13,
+            // Wrap at ~20 chars / 3 words, and cap the whole label at 6 words
+            // (the truncation itself happens in graphModel.js).
+            'text-wrap': 'wrap',
+            'text-max-width': '80px',
           },
         },
         {
           // Cytoscape's selector grammar needs spaces around the operator and
           // does not accept `type` as a bare class — `node[type = "entity"]`.
+          // Hover only thickens the border now; labels are handled by the zoom
+          // gate above, so hovering does not pop text in and out.
           selector: 'node[type = "entity"]:active',
-          style: { 'text-opacity': 1, 'border-width': 2 },
+          style: { 'border-width': 2 },
         },
         {
+          // Selected node: light-yellow ring + yellow glow. The old white 9px
+          // ring with a 28% white overlay read as a white-out blob, so the ring
+          // is halved and the emphasis moved into a real glow.
+          // Cytoscape has no box-shadow; `shadow-*` is the equivalent. 12px blur
+          // is double the 6px glow used on selected buttons elsewhere.
           selector: 'node:selected',
-          style: { 'border-width': 3, 'border-color': '#ffffff' },
+          style: {
+            'border-width': 4.5,
+            'border-color': '#ffe066',
+            'border-opacity': 1,
+            'shadow-blur': 12,
+            'shadow-color': '#ffe066',
+            'shadow-opacity': 0.9,
+            'shadow-offset-x': 0,
+            'shadow-offset-y': 0,
+            'z-index': 9999,
+          },
         },
         {
           selector: 'edge',
@@ -112,7 +138,10 @@ export default function CytoscapeGraph({ graph, params, onSelect, apiRef }) {
           if (!n || n.empty()) return
           cy.elements().unselect()
           n.select()
-          cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 400 })
+          // 30% closer than wherever we already are, so the node fills more of
+          // the viewport instead of just re-centring at the same scale.
+          const target = Math.min(cy.maxZoom(), cy.zoom() * 1.3)
+          cy.animate({ center: { eles: n }, zoom: target }, { duration: 400 })
         },
       }
     }
@@ -157,9 +186,11 @@ export default function CytoscapeGraph({ graph, params, onSelect, apiRef }) {
     // nodes puts neighbours closer than a node's own diameter — clicks then hit
     // whatever is drawn on top. Better to show part of the graph at a readable
     // scale and let the user pan than to show all of it unreadably.
+    // `zoomDistance` is the user-facing knob for how far in to pull.
     const MIN_ZOOM = 0.55
-    if (cy.zoom() < MIN_ZOOM) {
-      cy.zoom(MIN_ZOOM)
+    const target = Math.max(MIN_ZOOM, cy.zoom() * params.zoomDistance)
+    if (target > cy.zoom()) {
+      cy.zoom(target)
       cy.center()
     }
   }, [graph, params])
