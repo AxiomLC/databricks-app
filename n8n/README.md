@@ -207,5 +207,22 @@ node you asked about.
 
 ## Exports
 
-`ingestion-master.json` is a canvas export kept for reference. Refresh it with
-**Workflow → ⋯ → Download** after significant canvas changes.
+`ingestion-master.json` **is committed to this repo** — the canvas is published so the
+flow can be imported, read or learned from. It carries no secrets: credentials are
+referenced by ID and name only (`USPTO ODP`, `Slack 2`, `Databricks account`), so
+you must attach your own after importing.
+
+To refresh it: **Workflow → ⋯ → Download** and replace this file.
+
+### Importing it
+
+1. n8n → **Workflows → Import from File** → `ingestion-master.json`.
+2. Re-create the three credentials and attach them:
+   | Node(s) | Credential type |
+   |---|---|
+   | `USPTO TMs`, `USPTO File List`, `Download TDXF File` | `httpHeaderAuth` (header `X-API-Key`) |
+   | `Slack · Approve Upload` | `slackApi` |
+   | `Databricks` | `databricksApi` |
+3. Paths are absolute Windows paths (`C:/Users/q1fre/...`) in `Extract USPTO Gems`,
+   `Write Pillars`, `Write arXiv JSONL` and friends — rewrite them for your machine.
+4. The legs also need `scripts/uspto_extract.py` and `pillars.json` on disk.
