@@ -6,14 +6,16 @@ Plain-language guide: [`humanREADME.md`](./humanREADME.md).
 
 ## Where we are
 
-**Phase: PIPELINE COMPLETE → UI TEST/DEBUG.** Ingestion, Silver, Gold and Edges all
-run and are verified. The UI renders real data. Next work is testing and debugging
-the UI.
+**Phase: DONE WITH THE PIPELINE → MOVING THE UI ONTO DATABRICKS.**
+Ingestion, Silver, Gold and Edges run and are verified. USPTO terms are calibrated.
+The UI renders real data from a snapshot. The next piece of work is deploying it
+as a **Databricks App** so it queries the warehouse live, and comparing that to the
+local SPA.
 
 **Repo:** `AxiomLC/databricks-app` (public, GitHub).
 
 **Ingestion (n8n):** `databricks: Ingestion Master (All Legs)` (`GQs6702n6vwYjKVa`),
-active, 54 nodes / 4 triggers.
+active, 53 nodes / 4 triggers.
 
 ### Flow
 
@@ -82,34 +84,183 @@ Source of truth is the `Pillar Keywords` node — it writes `pillars.json` at ru
 them on read (§3.2 of the notebook). Do not remove that mapping — Bronze is never
 rewritten, so those files will always carry the old names.
 
-## What's next — UI test/debug
+## The UI today
 
-The UI is built and renders real data. It has **not** been reviewed by a human.
+The UI is built and renders real data from a snapshot. It has **not** been
+reviewed by a human.
+
+**Run it locally:**
 
 ```bash
 cd ui
 npm run dev          # http://localhost:5180  (port pinned, strictPort)
+python scripts/export_ui_data.py    # refresh snapshot after each pipeline run
 ```
 
-Data comes from a snapshot, not a live query:
+**Verified:** all four views render, graph click-testing passes, slider steps
+through all 7 dates, toggles work. **Not verified:** whether it *looks* right or is
+useful — that still needs eyes, and is the same question the Databricks App spike
+below is meant to answer.
+
+## What's next — deploy the UI as a Databricks App
+
+**The pitch:** the lakehouse is already there, Silver is already there. Put the UI
+on top of it and you have your own app on Databricks — no server to babysit, no
+snapshot to re-export. **Use AppKit**; that is the whole point and not a decision
+to relitigate.
+
+### Separate repo
+
+This is a **new project in its own directory and its own GitHub repo**. It shares
+nothing with `databricks-app` — different build, different deploy target,
+different lifecycle. The only thing copied across is the SQL (see below).
+Nothing in this repo imports from it or vice versa.
+
+### Why not just host the static build
+
+Databricks Apps will serve a Vite `dist/`, but a static build cannot query the
+warehouse: browser-side calls to the SQL Statement API need a token and shipping
+one to the client is a hard no. A small **backend** holds the credential and
+proxies queries. **AppKit gives you that backend, the Express server, static file
+serving and Vite dev mode already wired.**
+
+### Free Edition limits — confirmed
+
+From the Databricks Free Edition limitations page:
+
+- **Up to 3 Databricks Apps per account.**
+- **Apps run for up to 24 hours** after being started, updated or redeployed, then
+  stop automatically. Restartable at any time.
+- **One SQL warehouse, capped at `2X-Small`.** That is the warehouse the app must use.
+
+So there is no compute problem — only a **daily restart**. Expect to run
+`databricks apps start <APP_NAME>` (or redeploy) when you want to look at it.
+
+### The template: `appkit-analytics`
+
+`databricks/app-templates` → **`appkit-analytics`**. React + TypeScript + Vite +
+Tailwind + Express, with `client/`, `server/`, `shared/`, `config/queries/`,
+plus `app.yaml` and `databricks.yml` written for us.
+
+Its two plugins are exactly our needs:
+
+| Plugin | Gives us |
+|---|---|
+| Analytics | SQL execution against the SQL warehouse |
+| Server | Express + static file serving + Vite dev mode |
+
+`appkit-all-in-one` adds a **Genie plugin**, if we want the Genie panel done
+properly rather than via iframe.
+
+**`app.yaml`** — warehouse id comes from the resource, never hardcoded:
+
+```yaml
+command: ['npm', 'run', 'start']
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+```
+
+**`databricks.yml`** — bundle, with the warehouse granted to the app:
+
+```yaml
+bundle:
+  name: momentum-app
+
+variables:
+  sql_warehouse_id:
+    description: SQL Warehouse ID
+
+resources:
+  apps:
+    app:
+      name: "momentum-app"
+      source_code_path: ./
+      lifecycle:
+        started: true
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: CAN_USE
+
+targets:
+  default:
+    default: true
+    workspace:
+      host: https://<workspace>.cloud.databricks.com
+    variables:
+      sql_warehouse_id: <warehouse-id>
+```
+
+Deploy is a bundle deploy — do not hand-roll `databricks apps create`:
 
 ```bash
-python scripts/export_ui_data.py    # re-run after each pipeline run
+databricks auth login --host https://<workspace>.cloud.databricks.com
+databricks bundle deploy
+databricks apps start momentum-app      # or redeploy to restart the 24h clock
 ```
 
-**Known state:** all four views render; graph click-testing passes; slider steps
-through all 7 dates; toggles work. What is *not* verified is whether it looks
-right or is useful — that needs eyes.
+### Auth
 
-**Open UI questions:**
+Use the **service principal** — the app's own identity queries the warehouse. No
+consent prompts, no per-user setup. Only switch to on-behalf-of
+(`user_api_scopes: [sql]`) if per-user data governance is needed, which it is not
+for a momentum dashboard.
 
-1. Is the four-tab shape right? (Momentum Board / Graph Explorer / Setup / Logs)
-2. Should it query the warehouse live instead of reading a snapshot?
-3. Is the graph static layout acceptable, or should it animate?
-4. Setup and Logs are read-only placeholders — worth wiring, or cut?
+### The SQL already exists
 
-**Not wired:** pillar editing, per-leg ingest toggles, cron toggle, validation
+`scripts/export_ui_data.py` in this repo holds the exact six queries and its output
+shape **is** the UI's contract (`ui/src/data.js` documents it: `nodes`, `edges`,
+`volume`). Copy those queries into the new repo's `config/queries/` — copy, do not
+import. The frontend then swaps `loadSnapshot()` for a request to the AppKit
+analytics endpoint.
+
+| Query | Table |
+|---|---|
+| nodes | `silver_nodes` (grouped) |
+| edges | `silver_edges` |
+| latest metrics | `gold_level` (row_number = 1) |
+| momentum | `gold_level` (min_by / max_by) |
+| volume | `gold_volume` |
+| series | `gold_level` (filtered metrics) |
+
+### What we are comparing
+
+| | Local SPA (`npm run dev`) | Databricks App |
+|---|---|---|
+| Data | Snapshot, stale until re-exported | Live warehouse |
+| Auth | None | Workspace login |
+| Access | Only whoever runs the dev server | Anyone with workspace access |
+| Genie | Cross-origin iframe, unreadable | Same-origin → answers reach the Viewer |
+| Cost | Free | Free Edition: 3 apps, 24h then auto-stop |
+| Iteration | Instant HMR | Redeploy per change |
+
+The Genie row is the real prize: inside the app the backend can call the Genie
+Conversation API, which finally makes the `genie` Viewer state producible
+(§ *Genie — iframe now, API later*).
+
+**Still not wired:** pillar editing, per-leg ingest toggles, cron toggle, validation
 failures in Logs, Genie Conversation API.
+
+## ⚠️ Untested: the error / approval flow
+
+**Nobody has forced a failure through it.** `Route` output 1 → `Slack · Approve
+Upload` → `If1` → `Expand Approved` → `Databricks` is wired and reads correctly,
+but it has never actually fired. `Slack · Approve Upload` also still has a
+placeholder channel name.
+
+To test: make one leg fail deliberately (e.g. point `arXiv HTTP` at a bad URL, or
+set `Gate`'s `ALLOW_PARTIAL` path), run the graph, and confirm the Slack message
+arrives with working Approve/Decline buttons. Until then, treat error handling as
+written-but-unproven — a real failure may silently go nowhere.
+
+Do this **before** re-enabling the daily cron, so a genuine breakage on an
+unattended 05:00 run does not pass unnoticed.
+
+## UI reference
+
+Detail you need when changing the UI. Not next-steps.
 
 ### Graph Explorer — two engines, two panels
 
@@ -152,7 +303,9 @@ dialog and stored in `localStorage` (⚙ button in the panel header).
 
 **To pipe answers into the Viewer you need the Genie Conversation API**
 (stateful, returns generated SQL + results). That requires a backend to hold
-credentials — i.e. the Databricks App direction, not the static SPA.
+credentials — **which the Databricks App spike above now provides.** This is the
+strongest reason to do the app, beyond live data: inside the app the backend can
+call Genie and populate the `genie` Viewer state that today renders from nothing.
 
 **Untested:** whether Genie can generate correct **recursive CTEs** for multi-hop
 traversal over `silver_edges`. SQL traversal itself is fine (Databricks supports
@@ -195,14 +348,23 @@ first day Silver ran (2026-11-11).
 
 | Item | Action |
 |---|---|
-| `Webhook · temp-debug` | testing scaffold — remove when done, then `cleanStaleConnections` |
-| `ui/.shot.mjs` | screenshot harness — keep, documented in `techREADME.md` §7.4 |
-| `TEMP CRON` | enabled alongside the disabled daily cron — **fires every 27 days, not daily** |
+| **Test the error/approval flow** | Highest priority — see the section above. Do it before re-enabling the cron |
+| **Re-enable the daily cron** | `Cron · Daily 05:00` is `disabled: true`; `TEMP CRON` is a deliberate, unconnected scaffold. Leave both as they are until testing is done |
+| `Slack · Approve Upload` channel | `channelId` is the placeholder `ingestion-alerts` — set the real channel before testing the error flow |
 | `Write Error to UI` | disabled placeholder, no URL — the HITL/error feed target |
-| `READ ME` sticky note | still lists old pillar ids and the 55 MB figure |
+| `TEMP CRON` / `Webhook · temp-debug` / manual trigger | all three are **unconnected** — inert. Keep during testing, delete before going live, then `cleanStaleConnections` |
+| `READ ME` sticky note | still lists old pillar ids and the 55 MB figure (it is ~7 MB since the docket shrank) |
 | `Merge Validations` input indices | shuffled (0,1,2,3,4 out of order) — harmless, confusing |
+| `ui/.shot.mjs` | screenshot harness — **keep**, documented in `techREADME.md` §7.4 |
 
 ## Gotchas
+
+### Agent workflow
+
+- **The agent does not start n8n runs.** Edits and save/publish are fine; execution
+  is the user's call. `n8n_test_workflow` with `method: direct` runs the whole graph
+  from whichever trigger it picks, not just the node you asked about — execution
+  15785 fired a full unplanned 2026-11-16 ingest that way.
 
 ### n8n
 
@@ -240,6 +402,17 @@ first day Silver ran (2026-11-11).
   Gold partition on `observed_date`.
 - **USPTO is two-tier:** discovery is free; file bytes are capped at **6 per file
   per 7 days**, and every request counts including 429s.
+- **USPTO terms come from the `uspto` array, not `keyword`.** Trademark
+  goods/services prose shares no vocabulary with research or registries:
+  `approximate nearest neighbor` and `self-hosted AI` matched **0 of 7,430**
+  filings, so the leg fell back to `keyword` and produced an empty docket. With
+  the `uspto` arrays the same file yields ~850 filings. Literal phrases only;
+  two words minimum unless the word is unambiguous here (`database`, `chatbot`).
+  Detail: `techREADME.md` §5.6.1.
+- **Zero matches is not an error.** `uspto_extract.py` exits 0 on a quiet day
+  (`--strict` restores exit 2), and `Validate USPTO` uploads nothing when the
+  JSONL has no rows. Execution 15773 failed on the 2026-11-14 Sunday file purely
+  because the old script treated an empty result as a fatal exit 2.
 - **USPTO zips exceed the 5 GiB upload cap** — the extracted JSONL is what uploads.
 - Lakebase: password connections are off by default (project **and** per-compute);
   roles live on the **branch**; role names are case-sensitive (`"Admin"`).

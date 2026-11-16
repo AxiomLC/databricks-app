@@ -171,10 +171,11 @@ plus a log*, queried by a SQL engine. That is why re-running a whole notebook is
 cheap and safe here — and why the app should read Gold rather than query Delta on
 every page load.
 
-### Flow A — Daily collection (runs automatically at 05:00)
+### Flow A — Daily collection (scheduled 05:00)
 
 1. **A timer fires.** A scheduled job (called a **cron** — a timer written as
    five numbers meaning minute, hour, day, month, weekday) starts the run.
+   *The timer is currently switched off while the UI work happens — see §7.*
 2. **The keyword list is loaded.** One central list holds the five pillars and
    the search terms for each. This is the only place to change what gets
    searched.
@@ -318,7 +319,10 @@ needed.
 
 - **What it shows:** a two-dimensional map where each dot is a paper, repo,
   package, model, or trademark, and each line is a real connection between them.
-  Built with **Cytoscape.js** — a standard, well-tested graph library.
+- **Two drawing engines.** You can switch between **Cytoscape.js** (a standard,
+  well-tested graph library) and **Force Graph** (a live physics simulation where
+  dots repel each other and links pull them together). Same data, same colours —
+  different feel. Both have a settings panel so you can tune the spacing yourself.
 - **What it answers:** how an idea travels. Follow a paper to the repo that
   implemented it, to the package that shipped it, to the trademark that
   commercialised it.
@@ -329,7 +333,7 @@ needed.
      the same entities. That overlap is where the contests actually happen.
   2. **Colour = momentum, size = scale** — instantly separates "big but stalling"
      from "small but accelerating".
-  3. **A time slider** — drag through the last 10 days and watch clusters form.
+  3. **A time slider** — drag through the last 7 days and watch clusters form.
      This is the single best interaction: it turns a static map into the actual
      argument.
   4. **Path tracing** — click a trademark and watch the packages, repos and papers
@@ -338,8 +342,8 @@ needed.
 - **Why 2D and not 3D:** most 3D graph views look impressive and answer nothing.
   The dataset is small, so speed is not the problem — readability is. Spinning a
   graph in 3D makes it harder to read, not easier.
-- **Not built yet:** there are no relationships in the data yet, so there is
-  nothing to draw. That is the next piece of work.
+- **Built, and drawing real data:** 1,142 nodes and 2,796 relationships. It shows
+  clusters rather than long paths at the moment — see §7.
 
 ### 4.3 Setup / Pillars
 
@@ -439,28 +443,42 @@ needed.
 - ✅ Collection works. All seven sources return real data.
 - ✅ Validation and the human approval step are wired.
 - ✅ Files upload to cloud storage automatically.
-- ✅ **Silver works.** `momentum.momentum.silver_nodes` holds 2,428 rows across
-  four days and seven sources. Re-running it produces the same result.
-- ✅ **Gold works.** Two tables: `gold_level` (how big each thing is) and
-  `gold_volume` (how many things appeared).
+- ✅ **Silver works.** `momentum.momentum.silver_nodes` holds 2,432 rows across
+  seven sources. Re-running it produces the same result.
+- ✅ **Gold works.** Two tables: `gold_level` (how big each thing is, ~3,900 rows)
+  and `gold_volume` (how many things appeared per day, 63 rows).
 - ✅ **npm has real daily history.** npm's API returns a week of per-day download
   counts, so npm momentum works today — back to 8 Nov 2026. Every other source
   only has history from 11 Nov, when Silver started.
-- ✅ **Edges exist.** `silver_edges` holds 2,822 relationships in five kinds:
-  2,432 *membership* (this belongs to this pillar), 371 *citation* (this paper
+- ✅ **Edges exist.** `silver_edges` holds 2,796 relationships in five kinds:
+  2,406 *membership* (this belongs to this pillar), 371 *citation* (this paper
   cites that paper), 13 *dependency* (this package needs that package), 5
   *repo→package* (this repo publishes that package), and 1 trademark→company.
 - ✅ **Citations are real.** The most-cited paper inside the corpus is AlexNet,
   cited by 40 of the papers we track. That is the graph telling a story.
+- ✅ **The UI is built.** Four tabs — Momentum Board, Graph Explorer, Setup, Logs.
+  It reads a snapshot of the warehouse and renders real data.
+- ✅ **USPTO now finds real trademarks.** The old search terms were research
+  jargon that never appears in trademark paperwork, so the leg was silently
+  collecting nothing. It now has its own vocabulary and matches hundreds of
+  filings a day.
+- ✅ **A quiet day is no longer an error.** A thin weekend trademark file used to
+  stop the run dead. Now it is simply recorded as a quiet day.
+- ⏳ **The daily timer is switched off.** Runs are started by hand while the UI is
+  being tested. Turning it back on is a one-click change.
+- ⏳ **The failure path has not been tested.** Nobody has yet forced a broken leg
+  and confirmed the Slack approval message actually arrives. Until that is done,
+  treat error handling as written-but-unproven.
 - ⏳ **Paper→model links are still missing.** Connecting a paper to the Hugging
   Face model it produced needs one extra call *per model* (~543 per run), because
   the arXiv ID sits in the model's card rather than the list response. Deferred
   as a cost/benefit call, not a blocker.
-- ⏳ The five screens are scaffolded but not built.
-- ⏳ The USPTO historical archive is only partially downloaded (one of 177 parts).
+- ⏳ **Next: put the UI on Databricks itself.** Instead of a snapshot file, the app
+  can query the warehouse directly and live inside Databricks as its own app.
+  See [`HANDOVER.md`](./HANDOVER.md).
 
 The graph can now be drawn, but it will show clusters rather than paths until
-richer relationships are collected — see [`HANDOVER.md`](./HANDOVER.md).
+richer relationships are collected.
 
 ### Poking at it yourself in Databricks
 

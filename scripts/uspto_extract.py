@@ -15,9 +15,13 @@ Usage:
     python scripts/uspto_extract.py --no-prune            # keep older zips
 
 Exit codes:
-    0  success (JSONL written, or dry-run completed)
+    0  success (JSONL written, or dry-run completed) — including a zero-match day
     1  bad input (missing zip, missing pillars.json, unreadable XML)
-    2  no pillar terms matched (still writes an empty JSONL, but signals loudly)
+    2  only with --strict: no pillar terms matched
+
+A zero-match day is a real outcome, not a failure. Thin weekend dockets and
+quiet news days produce no hits against any pillar and must not halt the
+pipeline; pass --strict to opt back into the loud signal.
 """
 
 from __future__ import annotations
@@ -247,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", help="output JSONL path (default: alongside the zip)")
     parser.add_argument("--dry-run", action="store_true", help="report only, write nothing")
     parser.add_argument("--no-prune", action="store_true", help="keep older zips")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 2 when no pillar terms matched (default: exit 0)",
+    )
     args = parser.parse_args(argv)
 
     raw_dir = DEFAULT_RAW_DIR
@@ -326,10 +335,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if written == 0:
         print(
-            "warning: no pillar terms matched — check the terms in pillars.json",
+            "note: no pillar terms matched — quiet day, nothing to upload "
+            "(pass --strict to treat this as a failure)",
             file=sys.stderr,
         )
-        return 2
+        return 2 if args.strict else 0
     return 0
 
 

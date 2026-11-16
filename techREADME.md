@@ -189,23 +189,38 @@ Notes on the rewrite:
   and `openclaw` (1,624/mo) are excluded despite being the headline self-hosted
   apps — their real traffic is npm. Adding an npm leg is the fix, not padding the
   list with stubs.
-- `Pillar Keywords1` (disabled, USPTO Historical) carries an identical copy of
-  this list. Keep the two in sync.
+- `uspto` terms are **not** derived from `keyword`. Trademark prose shares almost no
+  vocabulary with research or package registries — see §5.6.1. Do not point the
+  USPTO leg back at `keyword`; that is what produced a zero-match docket.
 
 | Field | Consumed by | Constraint |
 |---|---|---|
 | `keyword` | arXiv `all:"…"`, GitHub `q=`, OpenAlex `title.search:"…"` | free text; quoted as a phrase in arXiv and OpenAlex |
 | `hf` | Hugging Face `search=` | **single word only** — HF ignores multi-word phrases |
-| `pypi` | `Flatten PyPI Packages` → one item per package | array |
+| `pypi` | `Flatten PyPI packages` → one item per package | array |
+| `npm` | `Flatten npm Packages` → one item per package | array; registry-native names |
+| `uspto` | `scripts/uspto_extract.py` → trademark goods/services matching | array; **literal phrases** — see §5.6.1 |
 
 ### 4.3 Triggers
 
-| Node | Cron | Fans out to |
-|---|---|---|
-| `Cron · Daily 05:00` | `0 5 * * *` | arXiv, HF, GitHub, USPTO TM, Flatten PyPI |
-| `OpenAlex WEEKLY Mon 09:00` | `0 9 * * 1` | `Pillar Keywords2` → OpenAlex |
-| `USPTO MONTHLY Hist 1st 03:00` | `0 3 1 * *` | `Pillar Keywords1` → USPTO Historical |
-| `TEMP CRON` | — | manual test trigger, **currently enabled** |
+| Node | Rule | State | Fans out to |
+|---|---|---|---|
+| `Cron · Daily 05:00` | `0 5 * * *` | **disabled** | `Pillar Keywords` → arXiv, HF, GitHub, PyPI, npm, USPTO |
+| `OpenAlex WEEKLY` | weekly | **disabled** | `Read Pillars` → `Pillar Keywords2` → OpenAlex |
+| `TEMP CRON` | every 27 days | enabled, **unconnected** | nothing — inert scaffold |
+| `Webhook · temp-debug` | path `temp-debug` | enabled, **unconnected** | nothing — inert scaffold |
+| `When clicking 'Execute workflow'` | manual | **disabled**, unconnected | nothing — inert scaffold |
+
+The two schedules are off while the UI work is in progress. Only `OpenAlex WEEKLY`'s
+downstream graph is reachable; its trigger is off. The three scaffolds are left in
+place deliberately during testing — do not treat them as entry points.
+
+The historical USPTO lane (`USPTO MONTHLY Hist`, `Pillar Keywords1`, `USPTO
+Historical Products`, `TRTYRAP` download) is **no longer on the canvas**. The
+annual backfile is a separate deferred job.
+
+⚠️ Never use an MCP `direct` test run on this workflow — it picks whichever
+trigger it finds and executes the whole graph, i.e. a full ingest.
 
 ### 4.4 Parse rules per source
 
@@ -257,12 +272,12 @@ Search returns no download links.
 
 | Leg | `productIdentifier` | Description |
 |---|---|---|
-| Trademarks | `TRTDXFAP` | daily applications, 682 files |
-| Historical | `TRTYRAP` | annual backfile to 1884, 177 parts (~10 GB) |
+| Trademarks | `TRTDXFAP` | daily applications, 682 files — **the only USPTO leg on the canvas** |
 
 - `q=trademark` also matches patents (`GZLST`, CPC) — always pin by `productIdentifier`.
 - Header casing is irrelevant (`X-API-Key` / `X-API-KEY` / `x-api-key` all 200).
-- `TRTYRAP`: only the newest of 177 parts is fetched — a fragment, not the dataset.
+- The `TRTYRAP` annual backfile (177 parts, ~10 GB) is **not on the canvas**. That
+  lane was removed; the backfile is a separate deferred job.
 
 ---
 
@@ -414,13 +429,61 @@ cases in **13.5 s**.
 | Negation guard | skips a term inside an exclusion clause (`excluding`, `except`, `not including`, `disclaim…`) |
 | Output | `<zip>.jsonl`, Bronze envelope, one record per hit |
 | Pruning | deletes every other `.zip` in the raw dir after a successful run |
-| Exit 0 | success |
+| Exit 0 | success — **including a zero-match day** |
 | Exit 1 | bad input (missing zip / `pillars.json` / unreadable XML) |
-| Exit 2 | no matches (writes empty JSONL, warns) |
+| Exit 2 | no matches, **only with `--strict`** (default exits 0) |
 
 Measured on `tdxf-apc261110.zip`: 62,981 cases → **5 matches** (ai-memory 3,
 hybrid-ram 1, object-storage 1). Trademarks are ~0.008% relevant; the leg is
 kept because the hits are high-signal (Elasticsearch B.V., FastS3 Inc.).
+
+**A zero-match day is not a failure.** Thin weekend dockets and quiet news days
+produce no hits at all. Exit 2 used to signal that loudly, which made execution
+15773 halt at `Extract USPTO Gems` on the 2026-11-14 Sunday file. The script now
+exits 0 by default; `--strict` restores the old behaviour for one-off checks.
+`Validate USPTO` additionally tolerates exit 2, marks the item `quietDay: true`,
+and passes **no binary** when the JSONL has zero rows so nothing empty is uploaded.
+
+#### 5.6.1 USPTO term calibration
+
+Trademark goods/services prose is written by lawyers to a Class 9 / Class 42
+template, not by engineers. The `keyword` field is therefore useless here:
+`approximate nearest neighbor` and `self-hosted AI` matched **0 of 7,430**
+filings, and `object storage` / `lakehouse` matched 0 as well. That is why the
+leg needs its own `uspto` array.
+
+Measured on `apc261114` (Sunday, 7,430 filings), filings matched per pillar with
+the shipped `uspto` arrays:
+
+| Pillar | Filings | Strongest terms |
+|---|---|---|
+| `self-hosted-vs-saas` | 568 | `software as a service` 291, `online non-downloadable` 247 |
+| `data-persistence` | 182 | `database` 147, `database management` 44 |
+| `temporal-memory` | 70 | `chatbot` 35, `digital assistant` 21 |
+| `stack-structure` | 64 | `data analytics` 29, `application programming interface` 28 |
+| `retrieval-engines` | 53 | `search engine` 24, `searchable database` 14 |
+
+Rules for editing these terms:
+
+- **Literal phrases only.** The matcher is word-bounded and plural-tolerant on the
+  final word; punctuation is escaped as-is, so `on-premises` and `on premises` are
+  different terms. Prefer spelling variants explicitly (`online` *and* `on-line`).
+- **Two words minimum**, except where a single word is unambiguous in this domain
+  (`database`, `chatbot`, `interoperability`). Bare `storage` was rejected — it
+  matches self-storage units and warehouse rental. Bare `software` matches most
+  of the docket.
+- **Zero-count terms are kept deliberately** where they are exact pillar
+  vocabulary (`retrieval-augmented generation`, `graph database`, `delta lake`,
+  `apache iceberg`, `open table format`, `interoperability`). They cost nothing
+  and fire the day a genuine filing lands in that niche.
+- **Expect cross-pillar bleed** on `searchable database` (retrieval *and*
+  persistence) and on `data analytics` / `application programming interface`.
+  Attribution is first-match-wins, so pillar order in the array matters.
+
+Caveat: these counts come from a single Sunday docket, which is the thinnest
+sample in the week. The pillars with deep vocabulary (SaaS, database) are solid;
+`temporal-memory` and `stack-structure` rest on proxies and should be re-measured
+once there is a weekday docket with hits to compare against.
 
 ### 5.7 `pillars.json` — shared pillar definitions
 
@@ -876,15 +939,13 @@ tools by the Zed `private_files` setting).
 
 | Issue | Impact |
 |---|---|
-| `TEMP CRON` enabled alongside `Cron · Daily 05:00` | manual trigger + schedule double-fires all 6 daily legs |
-| `Databricks1` still connected from `Route` output 1 | inert (disabled), but should be deleted |
+| **Error flow never exercised** | `Route` → `Slack · Approve Upload` → `If1` → `Expand Approved` is wired but untested. A real failure may not reach Slack |
 | `Write Error to UI` | disabled placeholder, no URL — the HITL/error feed target |
+| `Slack · Approve Upload` channel is a placeholder | `channelId` set to `ingestion-alerts` by name — must be changed to the real channel |
 | `Merge Validations` input indices shuffled | harmless (append mode) but confusing |
-| USPTO zips exceed the 5 GiB upload cap | upload node will fail on those legs |
-| `TRTYRAP` only newest part fetched | fragment, not the dataset |
 | OpenAlex bypasses `Merge` | `Gate.totalFiles` reads 6 daily / 1 weekly |
 | `WriteBinaryFile` overwrites | rerun on the same day replaces that day's file; USPTO zips have no date and always overwrite |
-| `Slack · Approve Upload` channel is a placeholder | `channelId` set to `ingestion-alerts` by name — must be changed to the real channel |
+| Inert scaffolds on canvas | `TEMP CRON`, `Webhook · temp-debug`, `When clicking 'Execute workflow'` are all unconnected — harmless, but easy to mistake for entry points |
 
 ---
 
@@ -898,13 +959,17 @@ tools by the Zed `private_files` setting).
 - ✅ Validation + Gate + Slack approval + Volume upload wired
 - ✅ **Silver** — `silver_nodes` built from Bronze JSONL, 2,432 rows, idempotent
 - ✅ **Registry-qualified IDs** — Silver re-applies the `npm:`/`pypi:` prefix on read, so pre-fix Bronze files are handled without rewriting the archive
-- ✅ **Gold** — `gold_level` (3,921 rows) + `gold_volume` (76 rows), idempotent
+- ✅ **Gold** — `gold_level` (~3,900 rows) + `gold_volume` (63 rows), idempotent
 - ✅ **npm daily series** — exploded into `downloads_day`, 7 days of real history (2026-11-08 → 11-14)
 - ✅ `node_id` registry-qualified (`npm:minio` vs `pypi:minio`)
-- ✅ **`silver_edges`** — 2,822 edges across 5 types, idempotent
+- ✅ **`silver_edges`** — 2,796 edges across 5 types, idempotent
 - ✅ **OpenAlex `referenced_works`** — 371 citation edges inside the corpus
 - ✅ **Package metadata** — PyPI `requires_dist` / `project_urls`, npm `dependencies` / `repository.url`; 13 dependency + 5 repo edges
+- ✅ **UI** — four views built, rendering a snapshot of real warehouse data
+- ✅ **USPTO `uspto` terms** — calibrated against a real docket; zero-match days no longer fail (§5.6.1)
 - ⏳ `paper_model` — needs a per-model HF call; not in `/api/models`
 - ⏳ Growth columns — need a full window (7-day from ~2026-11-18). npm already has enough history to compute now.
-- ⏳ USPTO annual backfile (1 of 177 parts)
-- ⏳ UI not built
+- ⏳ USPTO annual backfile — deferred, not on the canvas
+- ⏳ **Error flow untested** — no forced failure has been run through `Route` → `Slack · Approve Upload` → `If1` → `Expand Approved`
+- ⏳ **Daily cron disabled** — runs are manual during UI work
+- ⏳ **Databricks App** — port the UI to AppKit for live warehouse queries (see `HANDOVER.md`)
