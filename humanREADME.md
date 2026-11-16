@@ -464,18 +464,15 @@ needed.
   filings a day.
 - ✅ **A quiet day is no longer an error.** A thin weekend trademark file used to
   stop the run dead. Now it is simply recorded as a quiet day.
-- ⏳ **The daily timer is switched off.** Runs are started by hand while the UI is
-  being tested. Turning it back on is a one-click change.
-- ⏳ **The failure path has not been tested.** Nobody has yet forced a broken leg
-  and confirmed the Slack approval message actually arrives. Until that is done,
-  treat error handling as written-but-unproven.
+- ⏳ **The failure path has only been tested with a forced payload**, never a real
+  broken leg. Treat error handling as written-but-unproven.
 - ⏳ **Paper→model links are still missing.** Connecting a paper to the Hugging
   Face model it produced needs one extra call *per model* (~543 per run), because
   the arXiv ID sits in the model's card rather than the list response. Deferred
   as a cost/benefit call, not a blocker.
-- ⏳ **Next: put the UI on Databricks itself.** Instead of a snapshot file, the app
-  can query the warehouse directly and live inside Databricks as its own app.
-  See [`HANDOVER.md`](./HANDOVER.md).
+
+For what is actively being worked on — UI tweaks, graph search, MCP testing,
+Cypher queries — see [`HANDOVER.md`](./HANDOVER.md).
 
 The graph can now be drawn, but it will show clusters rather than paths until
 richer relationships are collected.

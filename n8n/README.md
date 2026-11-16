@@ -15,54 +15,99 @@ There is **one** workflow, not one per source:
 |---|---|
 | Name | `databricks: Ingestion Master (All Legs)` |
 | ID | `GQs6702n6vwYjKVa` |
-| Nodes | 53 (2 sticky notes) |
+| Nodes | 33 (incl. 4 sticky notes) |
 | Connections | 48 |
 | Status | active |
+| `versionCounter` | 470 at last export |
 
-The 7 original per-source workflows were deleted. Everything lives on this canvas.
+The original per-source workflows were deleted. Everything lives on this canvas.
 
 ## Shape
 
-```
-Pillar Keywords ─┬─► arXiv HTTP    → Parse arXiv        → Write arXiv JSONL  → Validate arXiv  ─┐
-                 ├─► HF HTTP       → Parse HF Models    → Write HF JSONL     → Validate HF     ─┤
-                 ├─► GitHub HTTP   → Parse GitHub Repos → Write GitHub JSONL → Validate GitHub ─┤
-                 ├─► Flatten PyPI ─► PyPI HTTP          → Parse PyPI Stats   → Write PyPI JSONL → Validate PyPI ─┤
-                 ├─► Flatten npm ──► npm HTTP           → Parse npm Stats    → Write npm JSONL → Validate npm  ─┤
-                 ├─► Write Pillars  (dangling → pillars.json)                                             │
-                 └─► USPTO TMs → Find Latest TDXF → USPTO File List → Pick Latest File →                │
-                                  Download TDXF File → Write TDXF → Extract USPTO Gems → Validate USPTO ┤
-                                                                                                          │
-                                  Merge Validations ──► Gate ──► Route ─┬─► Databricks                    │
-                                                                        └─► Slack · Approve Upload → If1    │
-                                                                                                    │       │
-                                                            Expand Approved → Databricks            │       │
-                                                                                                    │       │
-Validate USPTO ────────────────► Databricks / Slack (bypasses Gate and Merge) ◄─────────────────────┘
+```mermaid
+flowchart TD
+    CK["Cron · Daily 05:00"] --> PK["Pillar Keywords"]
+
+    PK --> AR["arXiv: HTTP → Parse → Write"]
+    PK --> HF["HF: HTTP → Parse → Write"]
+    PK --> GH["GitHub: HTTP → Parse → Write"]
+    PK --> PY["PyPI: Flatten → HTTP → Parse → Write"]
+    PK --> NM["npm: Flatten → HTTP → Parse → Write"]
+    PK --> WP["Write Pillars → pillars.json"]
+    PK --> US["USPTO: TMs → Find → Files → Pick → Download → Write → Extract"]
+
+    AR --> VA["Validate arXiv"]
+    HF --> VH["Validate HF"]
+    GH --> VG["Validate GitHub"]
+    PY --> VP["Validate PyPI"]
+    NM --> VN["Validate npm"]
+
+    VA --> MV["Merge Validations"]
+    VH --> MV
+    VG --> MV
+    VP --> MV
+    VN --> MV
+
+    OW["OpenAlex WEEKLY"] --> RP["Read Pillars"] --> PF["Pillar Keywords2"]
+    PF --> OA["OpenAlex HTTP → Parse → Write → Validate"]
+    OA --> GATE
+
+    MV --> GATE["Gate<br/>ALLOW_PARTIAL = false"]
+    GATE --> RT{"Route"}
+
+    RT -->|"route = upload"| DB["Databricks"]
+    RT -->|"route = error"| SL["Slack · Approve Upload"]
+
+    SL --> IF{"If1<br/>approved?"}
+    IF -->|"Approve Upload"| EA["Expand Approved"]
+    IF -->|"Cancel Execution"| WU["Write Error to UI<br/>(disabled)"]
+    EA --> DB
+
+    US --> VU["Validate USPTO"]
+    VU -->|"ok"| DB1["Databricks1"]
+    VU -->|"error"| SL
+
+    DB --> VOL["UC Volume<br/>momentum.momentum.landing"]
+    DB1 --> VOL
 ```
 
 Reading it as three lanes:
 
 1. **The five scored legs** — arXiv, HF, GitHub, PyPI, npm. All end at
-   `Merge Validations`, which feeds `Gate`.
-2. **USPTO** — a separate lane that reaches `Validate USPTO` and goes straight to
-   `Databricks`. It never touches `Merge Validations` or `Gate`.
+   `Merge Validations`, which feeds `Gate`. These are the only legs that vote on
+   whether the run is clean.
+2. **USPTO** — a separate lane that ends at `Validate USPTO` and goes straight to
+   its own `Databricks1` node. It never touches `Merge Validations` or `Gate`, and
+   it has its own `Slack · Approve Upload` branch. Deliberate: it is an unscored
+   discovery feed, so a USPTO failure must never block the scored legs.
 3. **The exit** — `Route` sends clean batches to `Databricks` and blocked ones to
-   Slack for human approval.
+   Slack for human approval. Approve rebuilds the healthy legs from Gate's
+   `manifest` and uploads; Cancel goes to `Write Error to UI` (currently disabled)
+   and nothing is written.
+
+`OpenAlex` is wired straight into `Gate`, bypassing `Merge Validations`, because
+`Merge` (append mode) waits for every input and would hang on a weekly-only
+trigger. Gate still judges it by the same `ok` test as everything else.
+
+> **Why two Databricks nodes.** `Databricks1` exists purely for layout — it saves a
+> long wire dragging back across the canvas from `Validate USPTO`. Both nodes write
+> to the same `momentum.momentum.landing` volume with identical parameters.
 
 ### Node count by role
 
 | Role | Nodes |
 |---|---|
-| Triggers | `Cron · Daily 05:00` (disabled), `TEMP CRON`, `OpenAlex WEEKLY` (disabled), `Webhook · temp-debug`, `When clicking 'Execute workflow'` (disabled) |
-| Fetch | `arXiv HTTP`, `HF HTTP`, `GitHub HTTP`, `PyPI HTTP`, `npm HTTP`, `USPTO TMs`, `USPTO File List`, `Download TDXF File` |
-| Parse | `Parse arXiv`, `Parse HF Models`, `Parse GitHub Repos`, `Parse PyPI Stats`, `Parse npm Stats`, `Find Latest TDXF`, `Pick Latest File` |
-| Write | `Write arXiv JSONL`, `Write HF JSONL`, `Write GitHub JSONL`, `Write PyPI JSONL`, `Write npm JSONL`, `Write TDXF`, `Write Pillars` |
-| Validate | `Validate arXiv`, `Validate HF`, `Validate GitHub`, `Validate PyPI`, `Validate npm`, `Validate USPTO` |
+| Triggers | `Cron · Daily 05:00`, `OpenAlex WEEKLY`, `TEMP CRON`, `Webhook · temp-debug`, `Test` (manual) |
+| Fetch | `arXiv HTTP`, `HF HTTP`, `GitHub HTTP`, `PyPI HTTP`, `npm HTTP`, `OpenAlex HTTP`, `USPTO TMs`, `USPTO File List`, `Download TDXF File` |
+| Parse | `Parse arXiv`, `Parse HF Models`, `Parse GitHub Repos`, `Parse PyPI Stats`, `Parse npm Stats`, `Parse OpenAlex`, `Find Latest TDXF`, `Pick Latest File` |
+| Write | `Write arXiv JSONL`, `Write HF JSONL`, `Write GitHub JSONL`, `Write PyPI JSONL`, `Write npm JSONL`, `Write OpenAlex JSONL`, `Write TDXF`, `Write Pillars` |
+| Validate | `Validate arXiv`, `Validate HF`, `Validate GitHub`, `Validate PyPI`, `Validate npm`, `Validate OpenAlex`, `Validate USPTO` |
 | Extract | `Extract USPTO Gems` (Execute Command → `scripts/uspto_extract.py`) |
 | Gate / route | `Merge Validations`, `Gate`, `Route`, `Slack · Approve Upload`, `If1`, `Expand Approved`, `Write Error to UI` (disabled) |
-| Sink | `Databricks` |
-| Config / notes | `Pillar Keywords`, `Flatten PyPI Packages`, `Flatten npm Packages`, `Read Pillars`, `Pillar Keywords2`, `Parse OpenAlex`, `OpenAlex HTTP`, `Write OpenAlex JSONL`, `Validate OpenAlex`, 2 sticky notes |
+| Sink | `Databricks`, `Databricks1` — same volume, `Databricks1` is for layout only |
+| Config | `Pillar Keywords`, `Flatten PyPI Packages`, `Flatten npm Packages`, `Read Pillars`, `Pillar Keywords2` |
+| Test-only | `Test` (manual trigger), `Test Error Payload` (Code) — remove when the error path is signed off |
+| Notes | 4 sticky notes: `READ ME · How this works`, `Sticky Note` (test), `Sticky Note1` (USPTO), `Sticky Note2` (daily legs) |
 
 ## Pillar Keywords — the only thing you edit
 
@@ -101,20 +146,20 @@ There are three, and they are not interchangeable:
 
 ## Schedules
 
-| Trigger | Cron / rule | State | Legs |
-|---|---|---|---|
-| `Cron · Daily 05:00` | `0 5 * * *` | **disabled** | arXiv, HF, GitHub, PyPI, npm, USPTO Trademarks |
-| `TEMP CRON` | every 27 days | enabled, **not connected** | nothing — inert |
-| `OpenAlex WEEKLY` | weekly | **disabled** | OpenAlex via `Read Pillars` |
-| `Webhook · temp-debug` | path `temp-debug` | enabled, **not connected** | nothing — inert |
-| `When clicking 'Execute workflow'` | manual | **disabled**, not connected | nothing — inert |
+| Trigger | Cron / rule | Legs |
+|---|---|---|
+| `Cron · Daily 05:00` | `0 5 * * *` | arXiv, HF, GitHub, PyPI, npm, USPTO Trademarks |
+| `OpenAlex WEEKLY` | `0 9 * * 1` (Mon 09:00) | OpenAlex via `Read Pillars` → `Pillar Keywords2` |
+| `TEMP CRON` | every 27 days | nothing — inert, wired only to satisfy validation |
+| `Webhook · temp-debug` | path `temp-debug` | currently feeds `Pillar Keywords` — a full-ingest trigger |
+| `Test` | manual | `Test Error Payload` → `Gate` — test leg only |
 
-Only `OpenAlex WEEKLY`'s *downstream* graph is live; its trigger is off. To run the
-pipeline, enable `Cron · Daily 05:00` (or the manual trigger) and re-enable
-`OpenAlex WEEKLY` for the weekly leg.
+⚠️ `Webhook · temp-debug` is **live and unauthenticated**. A `GET` to
+`https://n8n.airpg.ai/webhook/temp-debug` runs the whole daily batch. Disconnect it
+or delete it before this workflow is left unattended.
 
-> `TEMP CRON`, `Webhook · temp-debug` and `When clicking 'Execute workflow'` are
-> deliberately left in place during testing. Do not treat them as the entry points.
+> `TEMP CRON`, `Webhook · temp-debug` and `Test` are deliberately left in place during
+> testing. Do not treat them as the entry points.
 
 ## Output
 
@@ -174,16 +219,56 @@ hits the same filename and burns quota.
 matches; `Validate USPTO` marks `quietDay: true` and uploads nothing. Thin weekend
 dockets legitimately produce no hits.
 
+## The approval gate
+
+`Gate` is the single decision point for the five scored legs. It returns two shapes:
+
+| Path | Output |
+|---|---|
+| Clean | one item **per leg**, `route: 'upload'`, binary attached |
+| Blocked | **one summary item**, `route: 'error'`, all healthy binaries stacked as named keys `f0`, `f1`… |
+
+`ALLOW_PARTIAL` (top of the Gate Code node) defaults to `false`: any failing leg
+blocks the batch. Set it `true` to upload the healthy legs regardless.
+
+On the blocked path `Route` sends the summary to **`Slack · Approve Upload`**, which
+posts two buttons:
+
+| Button | Label | Style | Result |
+|---|---|---|---|
+| Approve | `Approve Upload` | primary | `If1` true → `Expand Approved` rebuilds healthy legs from `manifest` → `Databricks` |
+| Disapprove | `Cancel Execution` | `danger` | `If1` false → `Write Error to UI` (disabled) — nothing is written |
+
+Gotchas specific to this node:
+
+- `approvalType` **must be `double`**. The default `single` renders only one button —
+  which is why an earlier config showed Approve and nothing else.
+- The message template reads Gate's **summary** shape (`reason`, `runAt`, `okFiles`,
+  `failedFiles`, `totalFiles`, `legs[]`). It is not per-leg. Rewriting it against the
+  clean-path shape renders blanks.
+- `buttonDisapprovalStyle: danger` is accepted by the API though the editor schema
+  only offers primary/secondary — verify it survives a UI save.
+
+### Testing the error leg
+
+`Test` → `Test Error Payload` → `Gate` forces the blocked path without running any
+real leg:
+
+1. Wire `Test Error Payload` → `Gate` (it is left unwired between tests).
+2. Disconnect `Expand Approved` → `Databricks` if you do not want a dry-run write.
+3. Execute from the `Test` trigger.
+
+Remove both test nodes once the path is signed off.
+
 ## Testing
 
 Schedule triggers can't be fired externally, and instance-level MCP
 (`N8N_MCP_ACCESS_TOKEN`) is not configured. Options:
 
-1. **Manual trigger** — re-enable `When clicking 'Execute workflow'` and wire it to
-   the node you want to test, then click Execute in the editor.
-2. **Webhook** — `Webhook · temp-debug` is on the canvas but disconnected. Wire it
-   to `Pillar Keywords` (or any single node) and `GET
-   https://n8n.airpg.ai/webhook/temp-debug`.
+1. **Manual trigger** — `Test` is on the canvas and wired to `Test Error Payload`
+   only. Wire it to the node you want to test, then click Execute in the editor.
+2. **Webhook** — `Webhook · temp-debug` currently feeds `Pillar Keywords`, so `GET
+   https://n8n.airpg.ai/webhook/temp-debug` runs the whole daily batch. Unauthenticated.
 3. Inspect with `n8n_executions` (`mode: preview` or `filtered` — full mode returns
    megabytes of binary).
 4. Remove the temporary wiring and run `cleanStaleConnections`.
@@ -199,7 +284,18 @@ node you asked about.
 - **Parse nodes must loop `items`** and emit one output per input, or 5 pillars collapse into 1.
 - **`pillar` is not in HTTP responses.** Read it from `Pillar Keywords` (or the Flatten nodes) by position.
 - **Scoped npm names contain `@` and `/`.** `Write npm JSONL` and `Validate npm` must sanitize identically, or Databricks creates nested directories.
-- **`Merge` (append) waits for all inputs.** Never route a leg on a different trigger through a shared Merge — the run hangs. This is why OpenAlex goes straight to `Gate`, and why USPTO bypasses Merge entirely.
+- **`Merge` (append) waits for all inputs.** Never route a leg on a different
+  trigger through a shared Merge — the run hangs. This is why OpenAlex goes straight
+  to `Gate`, and why USPTO bypasses Merge entirely.
+- **USPTO is deliberately outside the Gate.** It is an unscored discovery feed and
+  has its own `Databricks1` sink and its own Slack branch. Do not "fix" this by
+  routing it through `Merge Validations` — a USPTO hiccup would then block the five
+  scored legs.
+- **`Validate USPTO` is the only validate node that reads from disk** (`fs`), not
+  from binary input. It falls back to the newest `.jsonl` in `data/uspto/raw` when
+  the extractor's stdout doesn't name a file.
+- **Slack `sendAndWait` needs `approvalType: double`** for two buttons. `single` is
+  the default and silently renders Approve only.
 - **Nested double quotes break under `cmd.exe`** in Execute Command nodes, and the failure can exit 0. Keep paths unquoted.
 - **Draft vs published.** Executions run the *published* version; the editor loads the *draft*. After MCP edits, **publish**, or the editor shows stale content.
 - **Canvas groups** must form a single connected subgraph with one entry and one exit, or n8n drops them on save.
@@ -212,7 +308,19 @@ flow can be imported, read or learned from. It carries no secrets: credentials a
 referenced by ID and name only (`USPTO ODP`, `Slack 2`, `Databricks account`), so
 you must attach your own after importing.
 
-To refresh it: **Workflow → ⋯ → Download** and replace this file.
+To refresh it, either **Workflow → ⋯ → Download** in the UI, or use the MCP tool
+`n8n_get_workflow` with `mode: "full"`. Both produce the same scrubbed body —
+full graph, credentials reduced to `{id, name}`.
+
+```
+n8n_get_workflow(id="GQs6702n6vwYjKVa", mode="full")
+```
+
+Do **not** use `mode: "filtered"` with `includeData`, or `n8n_executions` with
+`mode: "full"` — those return run payloads with megabytes of binary.
+
+Snapshot provenance: `versionCounter` 470, `versionId`
+`a3d31039-8393-45e9-bc95-cb3e23c29c1a`, exported 2026-11-16.
 
 ### Importing it
 
