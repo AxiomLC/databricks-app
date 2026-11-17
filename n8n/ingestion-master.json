@@ -1,11 +1,5 @@
 {
-  "updatedAt": "2026-11-16T18:43:24.872Z",
-  "createdAt": "2026-11-10T21:21:51.122Z",
-  "id": "GQs6702n6vwYjKVa",
   "name": "databricks: Ingestion Master (All Legs)",
-  "description": null,
-  "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -45,6 +39,16 @@
     },
     {
       "parameters": {
+        "jsCode": "// One item per pillar keyword. arXiv returns Atom XML in $json.data.\nconst kw = $('Pillar Keywords').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const pillar = (kw[i] && kw[i].json.pillar) || 'unknown';\n  const raw = items[i].json.data !== undefined ? items[i].json.data : items[i].json;\n  const feed = typeof raw === 'string' ? raw : JSON.stringify(raw);\n  const entries = feed.match(/<entry>[\\s\\S]*?<\\/entry>/g) || [];\n  const rows = entries.map((e) => {\n    const id = (e.match(/<id>([^<]+)<\\/id>/) || [])[1] || '';\n    const title = ((e.match(/<title>([^<]+)<\\/title>/) || [])[1] || '').trim();\n    const summary = ((e.match(/<summary>([^<]+)<\\/summary>/) || [])[1] || '').trim();\n    const published = (e.match(/<published>([^<]+)<\\/published>/) || [])[1] || '';\n    return { node_id: id, kind: 'paper', name: title, pillar, source: 'arxiv', raw_attrs: { summary, published }, ingested_at: new Date().toISOString() };\n  });\n  const jsonl = rows.map((r) => JSON.stringify(r)).join('\\n');\n  const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n  out.push({ json: { pillar, count: rows.length, written: jsonl.length }, binary: { data: binary }, pairedItem: { item: i } });\n}\nreturn out;"
+      },
+      "id": "code_arxiv",
+      "name": "Parse arXiv",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, -512]
+    },
+    {
+      "parameters": {
         "fileName": "=C:/Users/q1fre/ZED/databricks-app/data/arxiv/raw/{{ $('Pillar Keywords').item.json.pillar }}-{{ $now.format('yyyy-MM-dd') }}.jsonl",
         "options": {}
       },
@@ -70,6 +74,16 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [512, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per pillar keyword. HF returns a JSON array as raw text (responseFormat=text\n// avoids n8n splitting the array into one item per model).\nconst kw = $('Pillar Keywords').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const pillar = (kw[i] && kw[i].json.pillar) || 'unknown';\n  const raw = items[i].json.data !== undefined ? items[i].json.data : items[i].json;\n  let list = [];\n  try {\n    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;\n    list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.models) ? parsed.models : []);\n  } catch (e) { list = []; }\n  const rows = list.map((m) => ({\n    node_id: m.id || m.modelId || '',\n    kind: 'model',\n    name: m.id || m.modelId || '',\n    pillar,\n    source: 'huggingface',\n    raw_attrs: { downloads: m.downloads, likes: m.likes, lastModified: m.lastModified, pipeline_tag: m.pipeline_tag },\n    ingested_at: new Date().toISOString()\n  }));\n  const jsonl = rows.map((r) => JSON.stringify(r)).join('\\n');\n  const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n  out.push({ json: { pillar, count: rows.length, written: jsonl.length }, binary: { data: binary }, pairedItem: { item: i } });\n}\nreturn out;"
+      },
+      "id": "code_hf",
+      "name": "Parse HF Models",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, -80]
     },
     {
       "parameters": {
@@ -110,6 +124,16 @@
     },
     {
       "parameters": {
+        "jsCode": "// One item per package. The HTTP response carries no pillar, so read it from\n// the Flatten PyPI Packages node by position.\nconst src = $('Flatten PyPI Packages').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const meta = (src[i] && src[i].json) || {};\n  const p = items[i].json || {};\n  const d = p.data || {};\n  const name = p.package || meta.pkg || 'unknown';\n  const row = {\n    node_id: 'pypi:' + name,\n    kind: 'package',\n    name,\n    pillar: meta.pillar || 'unknown',\n    source: 'pypi',\n    raw_attrs: { last_day: d.last_day, last_week: d.last_week, last_month: d.last_month },\n    ingested_at: new Date().toISOString()\n  };\n  const jsonl = JSON.stringify(row);\n  const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n  out.push({ json: { pillar: row.pillar, pkg: name, count: 1, written: jsonl.length }, binary: { data: binary }, pairedItem: { item: i } });\n}\nreturn out;"
+      },
+      "id": "code_pypi",
+      "name": "Parse PyPI Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, 128]
+    },
+    {
+      "parameters": {
         "fileName": "=C:/Users/q1fre/ZED/databricks-app/data/pypi/raw/{{ $json.pillar }}-{{ $json.pkg }}-{{ $now.format('yyyy-MM-dd') }}.jsonl",
         "options": {}
       },
@@ -135,6 +159,16 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [512, -288]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per pillar keyword. GitHub search returns { items: [...] }.\nconst kw = $('Pillar Keywords').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const pillar = (kw[i] && kw[i].json.pillar) || 'unknown';\n  const j = items[i].json || {};\n  const list = Array.isArray(j.items) ? j.items : [];\n  const rows = list.map((r) => ({\n    node_id: r.full_name || '',\n    kind: 'repo',\n    name: r.full_name || '',\n    pillar,\n    source: 'github',\n    raw_attrs: { stars: r.stargazers_count, forks: r.forks_count, lang: r.language, updated: r.updated_at, html_url: r.html_url },\n    ingested_at: new Date().toISOString()\n  }));\n  const jsonl = rows.map((r) => JSON.stringify(r)).join('\\n');\n  const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n  out.push({ json: { pillar, count: rows.length, written: jsonl.length }, binary: { data: binary }, pairedItem: { item: i } });\n}\nreturn out;"
+      },
+      "id": "code_gh",
+      "name": "Parse GitHub Repos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, -288]
     },
     {
       "parameters": {
@@ -174,6 +208,16 @@
       "type": "n8n-nodes-base.writeBinaryFile",
       "typeVersion": 1,
       "position": [912, 912]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ODP search returns bulkDataProductBag (NOT products[]).\n// Pin the daily trademark applications product by identifier.\nconst bag = ($json && Array.isArray($json.bulkDataProductBag)) ? $json.bulkDataProductBag : [];\nconst PIN = 'TRTDXFAP';\nconst hit = bag.find((p) => p.productIdentifier === PIN);\nif (!hit) {\n  return [{ json: {\n    ok: false,\n    leg: 'uspto',\n    error: `product ${PIN} not found (bag size ${bag.length})`,\n  } }];\n}\nreturn [{ json: {\n  ok: true,\n  leg: 'uspto',\n  productIdentifier: hit.productIdentifier,\n  title: hit.productTitleText,\n  fromDate: hit.productFromDate,\n  toDate: hit.productToDate,\n  totalFiles: hit.productFileTotalQuantity,\n  totalSize: hit.productTotalFileSize,\n  detail_url: `https://api.uspto.gov/api/v1/datasets/products/${hit.productIdentifier}`,\n} }];"
+      },
+      "id": "code_uspto",
+      "name": "Find Latest TDXF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, 544]
     },
     {
       "parameters": {
@@ -219,16 +263,76 @@
     },
     {
       "parameters": {
+        "jsCode": "// SINGLE SOURCE OF TRUTH for the 5 tech pillars.\n// Edit keyword / hf / pypi / npm here — every leg reads from this node.\n// hf must be a SINGLE word: HF's search= does not match multi-word phrases.\n// pypi must be PyPI-native; npm must be npm-native. Never sum across registries.\n// See pillars_research_11_14_2026.md §5 and §6.1.\nconst PILLARS = [\n  {\n    pillar: 'self-hosted-vs-saas',\n    keyword: 'self-hosted AI',\n    hf: 'gguf',\n    pypi: ['ollama', 'llama-cpp-python', 'open-webui', 'langchain'],\n    npm: ['n8n', 'openclaw', 'langchain', 'openai', '@anthropic-ai/sdk'],\n  },\n  {\n    pillar: 'temporal-memory',\n    keyword: 'agent memory',\n    hf: 'memory',\n    pypi: ['mem0ai', 'zep-python', 'langmem', 'graphiti-core'],\n    npm: ['mem0ai'],\n  },\n  {\n    pillar: 'retrieval-engines',\n    keyword: 'approximate nearest neighbor',\n    hf: 'graph',\n    pypi: ['neo4j', 'kuzu', 'falkordb', 'memgraph', 'gremlinpython', 'faiss-cpu', 'usearch', 'hnswlib', 'annoy', 'qdrant-client', 'lancedb'],\n    npm: ['neo4j-driver', '@qdrant/js-client-rest', '@lancedb/lancedb', 'hnswlib-node', 'usearch', 'duckdb'],\n  },\n  {\n    pillar: 'data-persistence',\n    keyword: 'object storage',\n    hf: 'storage',\n    pypi: ['obstore', 'minio', 's3fs', 'fsspec', 'cloudpathlib', 'smart-open'],\n    npm: ['minio'],\n  },\n  {\n    pillar: 'stack-structure',\n    keyword: 'lakehouse',\n    hf: 'lakehouse',\n    pypi: ['deltalake', 'pyiceberg', 'duckdb', 'pyarrow', 'openlineage-python', 'databricks-sdk'],\n    npm: ['apache-arrow', '@databricks/sql'],\n  },\n];\nreturn PILLARS.map((p) => ({ json: p }));"
+      },
+      "id": "kw_pillars",
+      "name": "Pillar Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PyPI stats is per-package, not per-keyword: fan the pillar list out to packages.\nconst out = [];\nfor (const item of items) {\n  const p = item.json || {};\n  for (const pkg of (p.pypi || [])) {\n    out.push({ json: { pillar: p.pillar, keyword: p.keyword, pkg } });\n  }\n}\nreturn out;"
+      },
+      "id": "kw_pypi_flat",
+      "name": "Flatten PyPI Packages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 128]
+    },
+    {
+      "parameters": {
         "content": "# WHAT THIS WORKFLOW DOES\n## Every day it visits 7 public sources and saves date-stamped JSONL files to disk.\n---\n## 1. TRIGGERS\n### Cron · Daily 05:00 — arXiv, Hugging Face, GitHub, PyPI, npm, USPTO\n### OpenAlex WEEKLY — OpenAlex only, reads pillars.json from disk\n### TEMP CRON / Webhook temp-debug / Test — leftovers, not entry points\n---\n## 2. KEYWORDS\n### Pillar Keywords is the ONLY place to edit what we search for.\n### The 5 pillars: self-hosted-vs-saas · temporal-memory · retrieval-engines · data-persistence · stack-structure\n### Every leg reads from it — change it there, everything follows.\n---\n## 3. EACH LEG = 3 STEPS\n### Ask the website (HTTP) → clean it up (Code) → save a file (Write)\n### Files land in data/<source>/raw/<pillar>-<date>.jsonl\n---\n## 4. VALIDATE, THEN GATE\n### Every leg ends at a Validate node producing ok / errorCount / errors\n### The 5 scored legs merge, then Gate makes ONE decision for the whole run\n### USPTO and OpenAlex skip the Merge — Gate still judges OpenAlex\n---\n## 5. THE EXIT\n### Gate → Route: clean batch goes straight to Databricks\n### Any failure → Slack asks a human: Approve Upload / Cancel Execution\n### Approve uploads the healthy legs; Cancel ends the run, nothing written\n---\n## 6. GOTCHAS\n### Merge waits for ALL inputs — never route a second trigger through it\n### USPTO bypasses Gate on purpose: discovery feed, must never block scored legs\n### HF search= only matches single words (hf: 'graph', not 'graph database')\n### WriteBinaryFile overwrites — filenames must carry pillar + date and a package name\n### Scoped npm names (@scope/name) must be sanitised the same way in write and validate\n### Gate returns ONE summary item when blocked, not one item per leg\n---\n## WHY n8n AT ALL\n### Databricks Free Edition has no outbound internet, so n8n fetches, then uploads via the Databricks node",
-        "height": 824,
-        "width": 540,
+        "height": 1592,
+        "width": 652,
         "color": 4
       },
       "id": "sticky_readme",
       "name": "READ ME · How this works",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-800, 144]
+      "position": [-1024, -624]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate arXiv — checks the JSONL before it is allowed near the Volume.\n// Emits one item per file with ok / errors. Never throws: bad data is data.\nconst LEG = 'arxiv';\nconst EXPECTED_KIND = 'paper';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  out.push({\n    json: { leg: LEG, pillar, file: pillar + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "val_arxiv",
+      "name": "Validate arXiv",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, -512]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate HF — checks the JSONL before it is allowed near the Volume.\nconst LEG = 'huggingface';\nconst EXPECTED_KIND = 'model';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  out.push({\n    json: { leg: LEG, pillar, file: pillar + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "val_hf",
+      "name": "Validate HF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate GitHub — checks the JSONL before it is allowed near the Volume.\nconst LEG = 'github';\nconst EXPECTED_KIND = 'repo';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  out.push({\n    json: { leg: LEG, pillar, file: pillar + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "val_gh",
+      "name": "Validate GitHub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, -288]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate OpenAlex — checks the JSONL before it is allowed near the Volume.\nconst LEG = 'openalex';\nconst EXPECTED_KIND = 'paper';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  out.push({\n    json: { leg: LEG, pillar, file: pillar + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "val_oa",
+      "name": "Validate OpenAlex",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 912]
     },
     {
       "parameters": {
@@ -239,6 +343,16 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [1536, -128]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GATE — single decision point per run.\n// ALLOW_PARTIAL = false → any failing leg halts ALL uploads (default).\n// ALLOW_PARTIAL = true  → failing legs skipped, healthy legs upload.\nconst ALLOW_PARTIAL = false;\n\nconst all = items.map((i) => i.json);\nconst bad = all.filter((r) => !r.ok);\nconst good = all.filter((r) => r.ok);\nconst blocked = bad.length > 0 && !ALLOW_PARTIAL;\n\nconst summary = {\n  runAt: new Date().toISOString(),\n  totalFiles: all.length,\n  okFiles: good.length,\n  failedFiles: bad.length,\n  allowPartial: ALLOW_PARTIAL,\n  blocked,\n  legs: all.map((r) => ({\n    leg: r.leg,\n    pillar: r.pillar,\n    file: r.file,\n    rows: r.count,\n    ok: r.ok,\n    errorCount: r.errorCount,\n    errors: r.errors,\n  })),\n};\n\nif (!blocked) {\n  return items\n    .filter((it) => it.json.ok)\n    .map((it) => ({ json: { route: 'upload', ...it.json }, binary: it.binary, pairedItem: it.pairedItem }));\n}\n\n// Blocked: ONE item carrying the report plus every healthy payload as a named\n// binary, so an approval can still upload them without re-running the legs.\nconst bin = {};\nconst manifest = [];\nitems.forEach((it) => {\n  if (!it.json.ok) return;\n  const key = 'f' + manifest.length;\n  bin[key] = it.binary.data;\n  manifest.push({ key, leg: it.json.leg, file: it.json.file, pillar: it.json.pillar, rows: it.json.count });\n});\nreturn [{\n  json: { route: 'error', reason: 'VALIDATION FAILED — upload halted, awaiting approval', ...summary, manifest },\n  binary: bin,\n}];"
+      },
+      "id": "gate_validate",
+      "name": "Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1728, -80]
     },
     {
       "parameters": {
@@ -352,6 +466,37 @@
     },
     {
       "parameters": {
+        "jsCode": "// Validate PyPI — one file per package, so the filename carries the package name.\nconst LEG = 'pypi';\nconst EXPECTED_KIND = 'package';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  const pkg = items[idx].json.pkg || first.node_id || 'unknown';\n  out.push({\n    json: { leg: LEG, pillar, pkg, file: pillar + '-' + pkg + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "val_pypi",
+      "name": "Validate PyPI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 128]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate USPTO — checks the JSONL produced by scripts/uspto_extract.py,\n// then passes the file through as binary so the Databricks node can upload it.\n// Same contract as every other validator: one item per file, binary attached.\n//\n// USPTO is UNSCORED (discovery feed) — see pillars_research_11_14_2026.md 6.2.\n// It bypasses Gate deliberately, so a USPTO failure can never block uploads of\n// healthy legs. It still uploads; it just does not vote on momentum.\nconst fs = require('fs');\nconst path = require('path');\n\nconst LEG = 'uspto';\nconst RAW_DIR = 'C:/Users/q1fre/ZED/databricks-app/data/uspto/raw';\nconst PILLARS = ['self-hosted-vs-saas', 'temporal-memory', 'retrieval-engines', 'data-persistence', 'stack-structure'];\n\nconst out = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const j = items[i].json || {};\n  const errors = [];\n\n  // The Execute Command node returns { stdout, stderr, exitCode }.\n  const exitCode = j.exitCode;\n  if (exitCode !== undefined && exitCode !== 0) {\n    errors.push(`extractor exited ${exitCode}`);\n  }\n\n  // Locate the JSONL. Prefer the filename echoed by the extractor's stdout.\n  const stdout = String(j.stdout || '');\n  const m = stdout.match(/wrote \\d+ records -> (.+?\\.jsonl)/);\n  let jsonlPath = m ? m[1].trim() : '';\n\n  if (!jsonlPath) {\n    // Fall back to the newest .jsonl in the raw dir.\n    try {\n      const files = fs.readdirSync(RAW_DIR)\n        .filter((f) => f.endsWith('.jsonl'))\n        .map((f) => ({ f, t: fs.statSync(path.join(RAW_DIR, f)).mtimeMs }))\n        .sort((a, b) => b.t - a.t);\n      if (files.length) jsonlPath = path.join(RAW_DIR, files[0].f);\n    } catch (e) {\n      errors.push(`cannot list ${RAW_DIR}: ${e.message}`);\n    }\n  }\n\n  let rows = 0;\n  let badLines = 0;\n  const pillarCounts = {};\n  let binary = {};\n\n  if (!jsonlPath) {\n    errors.push('no JSONL produced');\n  } else if (!fs.existsSync(jsonlPath)) {\n    errors.push(`JSONL missing: ${jsonlPath}`);\n  } else {\n    const buf = fs.readFileSync(jsonlPath);\n    const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n    rows = lines.length;\n    for (const line of lines) {\n      let rec;\n      try {\n        rec = JSON.parse(line);\n      } catch {\n        badLines++;\n        continue;\n      }\n      if (!rec.node_id || !rec.kind || !rec.name || !rec.source) badLines++;\n      if (rec.pillar && !PILLARS.includes(rec.pillar)) badLines++;\n      if (rec.pillar) pillarCounts[rec.pillar] = (pillarCounts[rec.pillar] || 0) + 1;\n    }\n    if (badLines > 0) errors.push(`${badLines} malformed line(s)`);\n    // Zero matches is a legitimate outcome (quiet day), not a failure.\n\n    // Pass the file through so Databricks can upload it.\n    binary = { data: await this.helpers.setBinaryDataBuffer(buf, 'application/x-ndjson') };\n  }\n\n  out.push({\n    json: {\n      leg: LEG,\n      pillar: 'multi',\n      scored: false,\n      role: 'discovery',\n      file: jsonlPath ? path.basename(jsonlPath) : 'none',\n      count: rows,\n      ok: errors.length === 0,\n      errorCount: errors.length,\n      errors,\n      pillarCounts,\n      exitCode: exitCode === undefined ? null : exitCode,\n    },\n    binary,\n    pairedItem: { item: i },\n  });\n}\n\nreturn out;"
+      },
+      "id": "val_uspto",
+      "name": "Validate USPTO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 736],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rebuilds one item per healthy leg from the payloads Gate stashed on the\n// blocked item, so an approved run uploads without re-fetching anything.\nconst gate = $('Gate').first().json;\nconst bin = $('Gate').first().binary || {};\nconst out = [];\nfor (const m of (gate.manifest || [])) {\n  if (!bin[m.key]) continue;\n  out.push({ json: { leg: m.leg, file: m.file, pillar: m.pillar, rows: m.rows }, binary: { data: bin[m.key] } });\n}\nreturn out;"
+      },
+      "id": "expand_approved",
+      "name": "Expand Approved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2416, 160]
+    },
+    {
+      "parameters": {
         "content": "# USPTO · Trademarks\n\n## Discovery feed — UNSCORED\n\n### Cron · Daily 05:00 → Validate USPTO → Databricks1\n\n### Bypasses Gate and Merge on purpose so a USPTO failure can never block the scored legs",
         "height": 384,
         "width": 976,
@@ -400,6 +545,16 @@
           "name": "USPTO ODP"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Detail response: bulkDataProductBag[0].productFileBag.fileDataBag[]\n// Real file keys: fileName, fileSize, fileDataFromDate, fileDataToDate,\n//                 fileTypeText, fileDownloadURI, fileReleaseDate, fileLastModifiedDateTime\nconst bag = ($json && Array.isArray($json.bulkDataProductBag)) ? $json.bulkDataProductBag : [];\nconst prod = bag[0] || {};\nconst files = (prod.productFileBag && Array.isArray(prod.productFileBag.fileDataBag))\n  ? prod.productFileBag.fileDataBag\n  : [];\nif (!files.length) {\n  return [{ json: { ok: false, leg: 'uspto', error: 'no fileDataBag entries' } }];\n}\n\n// Newest by data coverage date, then release date, then filename.\nconst dateOf = (f) => String(\n  f.fileDataToDate || f.fileReleaseDate || f.fileLastModifiedDateTime || f.fileName || ''\n);\nconst latest = files.slice().sort((a, b) => dateOf(b).localeCompare(dateOf(a)))[0];\nconst url = latest.fileDownloadURI || '';\nif (!url) {\n  return [{ json: { ok: false, leg: 'uspto', error: 'no fileDownloadURI on latest file', sample: latest } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  leg: 'uspto',\n  file: latest.fileName || 'tdxf.zip',\n  dataFrom: latest.fileDataFromDate || '',\n  dataTo: latest.fileDataToDate || '',\n  released: latest.fileReleaseDate || '',\n  fileSize: latest.fileSize || 0,\n  download_url: url,\n} }];"
+      },
+      "id": "code_uspto_pick",
+      "name": "Pick Latest File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 544]
     },
     {
       "parameters": {
@@ -483,25 +638,130 @@
     },
     {
       "parameters": {
-        "content": "# TEST ERROR PAYLOAD\n\n## Test → Test Error Payload → Gate\n\n### Emits ok:false so Route takes the Slack branch. Remove after testing.",
-        "width": 448
+        "jsCode": "   const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n   const PILLARS = JSON.parse(buf.toString('utf8'));\n   return PILLARS.map((p) => ({ json: p }));\n   "
+      },
+      "id": "5c7bf76b-059b-438f-9aa8-37c22981d2fe",
+      "name": "Pillar Keywords2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [304, 912]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per pillar keyword. OpenAlex returns { results: [...] }.\nconst kw = $('Pillar Keywords2').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const pillar = (kw[i] && kw[i].json.pillar) || 'unknown';\n  const j = items[i].json || {};\n  const list = Array.isArray(j.results) ? j.results : [];\n  const rows = list.map((w) => ({\n    node_id: w.id || '',\n    kind: 'paper',\n    name: (w.title || '').trim(),\n    pillar,\n    source: 'openalex',\n    raw_attrs: { doi: w.doi || '', cited_by_count: w.cited_by_count, publication_year: w.publication_year, authorships: (w.authorships || []).length },\n    ingested_at: new Date().toISOString()\n  }));\n  const jsonl = rows.map((r) => JSON.stringify(r)).join('\\n');\n  const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n  out.push({ json: { pillar, count: rows.length, written: jsonl.length }, binary: { data: binary }, pairedItem: { item: i } });\n}\nreturn out;"
+      },
+      "id": "code_oa",
+      "name": "Parse OpenAlex",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, 912]
+    },
+    {
+      "parameters": {
+        "jsCode": "// npm bulk lookups reject scoped packages (@scope/name), so split the cohort:\n//   unscoped -> ONE bulk range call (up to 128 packages)\n//   scoped   -> one call each, spaced\n// Emits one item per REQUEST, not per package. Parse npm Stats fans the\n// response back out to one row per package.\nconst out = [];\nconst unscoped = [];\nconst scoped = [];\n\nfor (const item of items) {\n  const p = item.json || {};\n  for (const pkg of (p.npm || [])) {\n    const entry = { pillar: p.pillar, keyword: p.keyword, pkg };\n    if (pkg.startsWith('@')) scoped.push(entry);\n    else unscoped.push(entry);\n  }\n}\n\nif (unscoped.length) {\n  out.push({\n    json: {\n      mode: 'bulk',\n      pkgs: unscoped.map((e) => e.pkg),\n      path: unscoped.map((e) => e.pkg).join(','),\n      meta: unscoped,\n    },\n  });\n}\n\nfor (const entry of scoped) {\n  out.push({\n    json: { mode: 'single', pkgs: [entry.pkg], path: encodeURIComponent(entry.pkg), meta: [entry] },\n  });\n}\n\nreturn out;"
+      },
+      "id": "6ea9213c-4eee-4faf-8c42-08ccf8b16f81",
+      "name": "Flatten npm Packages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 304]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.npmjs.org/downloads/range/' + $now.minus({ days: 6 }).format('yyyy-MM-dd') + ':' + $now.format('yyyy-MM-dd') + '/' + $json.path }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2500
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ecb02ed8-cc27-4f5e-8823-594b3e19a170",
+      "name": "npm HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [512, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "// npm returns a top-level object keyed by package name.\n//   bulk   -> { \"n8n\": {...}, \"openclaw\": {...} }\n//   single -> { \"downloads\": [...], \"package\": \"...\", \"start\": ..., \"end\": ... }\n// Normalise both into one row per package, then emit one JSONL file each.\nconst src = $('Flatten npm Packages').all();\nconst out = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const req = (src[i] && src[i].json) || {};\n  const meta = req.meta || [];\n  const resp = items[i].json || {};\n\n  // Single-package responses are not keyed by name; wrap them.\n  const byPkg = resp.package ? { [resp.package]: resp } : resp;\n\n  for (const entry of meta) {\n    const p = byPkg[entry.pkg];\n    if (!p) continue;\n    const days = Array.isArray(p.downloads) ? p.downloads : [];\n\n    // Isolated zeros are gaps in npm's data, not real zero-download days.\n    const values = days.map((d) => Number(d.downloads) || 0);\n    const total = values.reduce((a, b) => a + b, 0);\n    const nonZero = values.filter((v) => v > 0);\n\n    const row = {\n      node_id: 'npm:' + entry.pkg,\n      kind: 'package',\n      name: entry.pkg,\n      pillar: entry.pillar || 'unknown',\n      source: 'npm',\n      raw_attrs: {\n        registry: 'npm',\n        window_start: p.start || null,\n        window_end: p.end || null,\n        days: days.length,\n        total_7d: total,\n        last_day: values.length ? values[values.length - 1] : 0,\n        zero_days: values.length - nonZero.length,\n        series: days.map((d) => ({ day: d.day, downloads: Number(d.downloads) || 0 })),\n      },\n      ingested_at: new Date().toISOString(),\n    };\n    const jsonl = JSON.stringify(row);\n    const binary = await this.helpers.setBinaryDataBuffer(Buffer.from(jsonl, 'utf8'), 'application/x-ndjson');\n    out.push({\n      json: { pillar: row.pillar, pkg: entry.pkg, count: 1, days: days.length, total_7d: total, written: jsonl.length },\n      binary: { data: binary },\n      pairedItem: { item: i },\n    });\n  }\n}\nreturn out;"
+      },
+      "id": "4a4633df-88bc-4604-a6f5-575727433c4a",
+      "name": "Parse npm Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [704, 304]
+    },
+    {
+      "parameters": {
+        "fileName": "=C:/Users/q1fre/ZED/databricks-app/data/npm/raw/{{ $json.pillar }}-{{ $json.pkg.replace(/[@\\/]/g, '') }}-{{ $now.format('yyyy-MM-dd') }}.jsonl",
+        "options": {}
+      },
+      "id": "d2ef72e3-5ddf-47c2-ae3a-14dbcfba3664",
+      "name": "Write npm JSONL",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [912, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate npm — one file per package, so the filename carries the package name.\n// Scoped names (@scope/name) must be sanitised the SAME way as Write npm JSONL,\n// because the Databricks node builds its upload path from this `file` field.\nconst LEG = 'npm';\nconst EXPECTED_KIND = 'package';\nconst REQUIRED = ['node_id', 'kind', 'name', 'pillar', 'source'];\nconst DATE = $now.toFormat('yyyy-MM-dd');\nconst out = [];\nfor (let idx = 0; idx < items.length; idx++) {\n  const buf = await this.helpers.getBinaryDataBuffer(idx, 'data');\n  const lines = buf.toString('utf8').split('\\n').filter((l) => l.trim());\n  const errors = [];\n  const seen = new Set();\n  if (lines.length === 0) errors.push('file is empty');\n  lines.forEach((l, i) => {\n    let r;\n    try { r = JSON.parse(l); } catch (e) { errors.push('line ' + (i + 1) + ': invalid JSON'); return; }\n    for (const k of REQUIRED) if (!r[k]) errors.push('line ' + (i + 1) + ': missing ' + k);\n    if (r.kind && r.kind !== EXPECTED_KIND) errors.push('line ' + (i + 1) + ': kind=' + r.kind + ' expected ' + EXPECTED_KIND);\n    if (r.source && r.source !== LEG) errors.push('line ' + (i + 1) + ': source=' + r.source + ' expected ' + LEG);\n    if (r.node_id) { if (seen.has(r.node_id)) errors.push('line ' + (i + 1) + ': duplicate node_id ' + r.node_id); seen.add(r.node_id); }\n  });\n  let first = {};\n  try { first = JSON.parse(lines[0] || '{}'); } catch (e) { first = {}; }\n  const pillar = first.pillar || 'unknown';\n  const pkg = items[idx].json.pkg || first.node_id || 'unknown';\n  const safe = String(pkg).replace(/[@\\/]/g, '');\n  out.push({\n    json: { leg: LEG, pillar, pkg, file: pillar + '-' + safe + '-' + DATE + '.jsonl', count: lines.length, ok: errors.length === 0, errorCount: errors.length, errors: errors.slice(0, 20) },\n    binary: items[idx].binary,\n    pairedItem: { item: idx },\n  });\n}\nreturn out;"
+      },
+      "id": "de05f87f-dfc2-46fe-961f-34c8d4409d2f",
+      "name": "Validate npm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1104, 304]
+    },
+    {
+      "parameters": {},
+      "id": "test-trigger-gate",
+      "name": "Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [1328, -592],
+      "notes": "TEST ONLY. Wired to 'TEST · Fake Gate Payload'."
+    },
+    {
+      "parameters": {
+        "jsCode": "// TEST ONLY — deliberately FAILING gate payload so Route takes the error branch.\n// Shape matches real Gate output: route, leg, pillar, file, count, ok, errorCount, errors[]\n// No binary on purpose: the Slack/approve leg only reads file + count.\nreturn [{\n  json: {\n    route: 'upload',\n    leg: 'arxiv',\n    pillar: 'self-hosted-vs-saas',\n    file: 'TEST-forced-failure-2026-11-16.jsonl',\n    count: 3,\n    ok: false,\n    errorCount: 1,\n    errors: ['TEST: forced failure to exercise Slack approve leg'],\n  },\n}];"
+      },
+      "id": "test-fake-gate-payload",
+      "name": "Test Error Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1488, -592],
+      "notes": "TEST ONLY. Emits ok:false so Route -> output 1 -> Slack Approve Upload."
+    },
+    {
+      "parameters": {
+        "content": "# TEST ERROR PAYLOAD",
+        "height": 192,
+        "width": 416
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [1280, -592],
+      "position": [1280, -624],
       "id": "42f91970-4c0c-4619-884b-d39837dd8b1e",
       "name": "Sticky Note"
     },
     {
       "parameters": {
-        "content": "# arXiv · GitHub · HF · PyPI · npm\n\n## The 5 scored daily legs\n\n### Cron · Daily 05:00\n\n### Each: HTTP → Parse → Write → Validate → Merge Validations → Gate",
-        "height": 1056,
+        "content": "# arXiv · GitHub · HF · PyPI · npm\n\n## The 5 scored daily legs. Cron · Daily 05:00. Each: HTTP → Parse → Write → Validate → Merge Validations → Gate",
+        "height": 1088,
         "width": 976,
         "color": 7
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [272, -592],
+      "position": [272, -624],
       "id": "9547f130-9203-4775-92d8-be9cc121f9d3",
       "name": "Sticky Note2"
     },
@@ -526,26 +786,6 @@
           "name": "Databricks account"
         }
       }
-    },
-    {
-      "parameters": {},
-      "id": "test-trigger-gate",
-      "name": "Test",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [1328, -560],
-      "notes": "TEST ONLY. Wired to 'TEST · Fake Gate Payload'."
-    },
-    {
-      "parameters": {
-        "jsCode": "// TEST ONLY — deliberately FAILING gate payload so Route takes the error branch.\n// Shape matches real Gate output: route, leg, pillar, file, count, ok, errorCount, errors[]\n// No binary on purpose: the Slack/approve leg only reads file + count.\nreturn [{\n  json: {\n    route: 'upload',\n    leg: 'arxiv',\n    pillar: 'self-hosted-vs-saas',\n    file: 'TEST-forced-failure-2026-11-16.jsonl',\n    count: 3,\n    ok: false,\n    errorCount: 1,\n    errors: ['TEST: forced failure to exercise Slack approve leg'],\n  },\n}];"
-      },
-      "id": "test-fake-gate-payload",
-      "name": "Test Error Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1488, -560],
-      "notes": "TEST ONLY. Emits ok:false so Route -> output 1 -> Slack Approve Upload."
     }
   ],
   "connections": {
@@ -580,132 +820,132 @@
       "main": [[{"index": 0, "node": "Write TDXF", "type": "main"}]]
     },
     "Cron · Daily 05:00": {
-      "main": [[{"index": 0, "node": "Pillar Keywords", "type": "main"}]]
+      "main": [[{"node": "Pillar Keywords", "type": "main", "index": 0}]]
     },
     "Pillar Keywords": {
       "main": [[
-        {"index": 0, "node": "arXiv HTTP", "type": "main"},
-        {"index": 0, "node": "HF HTTP", "type": "main"},
-        {"index": 0, "node": "GitHub HTTP", "type": "main"},
-        {"index": 0, "node": "Flatten PyPI Packages", "type": "main"},
-        {"index": 0, "node": "Write Pillars", "type": "main"},
-        {"index": 0, "node": "Flatten npm Packages", "type": "main"},
-        {"index": 0, "node": "USPTO TMs", "type": "main"}
+        {"node": "arXiv HTTP", "type": "main", "index": 0},
+        {"node": "HF HTTP", "type": "main", "index": 0},
+        {"node": "GitHub HTTP", "type": "main", "index": 0},
+        {"node": "Flatten PyPI Packages", "type": "main", "index": 0},
+        {"node": "Write Pillars", "type": "main", "index": 0},
+        {"node": "Flatten npm Packages", "type": "main", "index": 0},
+        {"node": "USPTO TMs", "type": "main", "index": 0}
       ]]
     },
     "Flatten PyPI Packages": {
-      "main": [[{"index": 0, "node": "PyPI HTTP", "type": "main"}]]
+      "main": [[{"node": "PyPI HTTP", "type": "main", "index": 0}]]
     },
     "Write arXiv JSONL": {
-      "main": [[{"index": 0, "node": "Validate arXiv", "type": "main"}]]
+      "main": [[{"node": "Validate arXiv", "type": "main", "index": 0}]]
     },
     "Write HF JSONL": {
-      "main": [[{"index": 0, "node": "Validate HF", "type": "main"}]]
+      "main": [[{"node": "Validate HF", "type": "main", "index": 0}]]
     },
     "Write GitHub JSONL": {
-      "main": [[{"index": 0, "node": "Validate GitHub", "type": "main"}]]
+      "main": [[{"node": "Validate GitHub", "type": "main", "index": 0}]]
     },
     "Write OpenAlex JSONL": {
-      "main": [[{"index": 0, "node": "Validate OpenAlex", "type": "main"}]]
+      "main": [[{"node": "Validate OpenAlex", "type": "main", "index": 0}]]
     },
     "Write PyPI JSONL": {
-      "main": [[{"index": 0, "node": "Validate PyPI", "type": "main"}]]
+      "main": [[{"node": "Validate PyPI", "type": "main", "index": 0}]]
     },
     "Validate arXiv": {
-      "main": [[{"index": 0, "node": "Merge Validations", "type": "main"}]]
+      "main": [[{"node": "Merge Validations", "type": "main", "index": 0}]]
     },
     "Validate HF": {
-      "main": [[{"index": 2, "node": "Merge Validations", "type": "main"}]]
+      "main": [[{"node": "Merge Validations", "type": "main", "index": 2}]]
     },
     "Validate GitHub": {
-      "main": [[{"index": 1, "node": "Merge Validations", "type": "main"}]]
+      "main": [[{"node": "Merge Validations", "type": "main", "index": 1}]]
     },
     "Validate OpenAlex": {
-      "main": [[{"index": 0, "node": "Gate", "type": "main"}]]
+      "main": [[{"node": "Gate", "type": "main", "index": 0}]]
     },
     "Merge Validations": {
-      "main": [[{"index": 0, "node": "Gate", "type": "main"}]]
+      "main": [[{"node": "Gate", "type": "main", "index": 0}]]
     },
     "Gate": {
-      "main": [[{"index": 0, "node": "Route", "type": "main"}]]
+      "main": [[{"node": "Route", "type": "main", "index": 0}]]
     },
     "Slack · Approve Upload": {
-      "main": [[{"index": 0, "node": "If1", "type": "main"}]]
+      "main": [[{"node": "If1", "type": "main", "index": 0}]]
     },
     "If1": {
       "main": [
-        [{"index": 0, "node": "Expand Approved", "type": "main"}],
-        [{"index": 0, "node": "Write Error to UI", "type": "main"}]
+        [{"node": "Expand Approved", "type": "main", "index": 0}],
+        [{"node": "Write Error to UI", "type": "main", "index": 0}]
       ]
     },
     "Validate PyPI": {
-      "main": [[{"index": 3, "node": "Merge Validations", "type": "main"}]]
+      "main": [[{"node": "Merge Validations", "type": "main", "index": 3}]]
     },
     "Route": {
       "main": [
-        [{"index": 0, "node": "Databricks", "type": "main"}],
-        [{"index": 0, "node": "Slack · Approve Upload", "type": "main"}]
+        [{"node": "Databricks", "type": "main", "index": 0}],
+        [{"node": "Slack · Approve Upload", "type": "main", "index": 0}]
       ]
     },
     "Expand Approved": {
-      "main": [[{"index": 0, "node": "Databricks", "type": "main"}]]
+      "main": [[{"node": "Databricks", "type": "main", "index": 0}]]
     },
     "Webhook · temp-debug": {
-      "main": [[{"index": 0, "node": "Pillar Keywords", "type": "main"}]]
+      "main": [[{"node": "Pillar Keywords", "type": "main", "index": 0}]]
     },
     "Find Latest TDXF": {
-      "main": [[{"index": 0, "node": "USPTO File List", "type": "main"}]]
+      "main": [[{"node": "USPTO File List", "type": "main", "index": 0}]]
     },
     "USPTO File List": {
-      "main": [[{"index": 0, "node": "Pick Latest File", "type": "main"}]]
+      "main": [[{"node": "Pick Latest File", "type": "main", "index": 0}]]
     },
     "Pick Latest File": {
-      "main": [[{"index": 0, "node": "Download TDXF File", "type": "main"}]]
+      "main": [[{"node": "Download TDXF File", "type": "main", "index": 0}]]
     },
     "USPTO TMs": {
-      "main": [[{"index": 0, "node": "Find Latest TDXF", "type": "main"}]]
+      "main": [[{"node": "Find Latest TDXF", "type": "main", "index": 0}]]
     },
     "Write TDXF": {
-      "main": [[{"index": 0, "node": "Extract USPTO Gems", "type": "main"}]]
+      "main": [[{"node": "Extract USPTO Gems", "type": "main", "index": 0}]]
     },
     "Extract USPTO Gems": {
-      "main": [[{"index": 0, "node": "Validate USPTO", "type": "main"}]]
+      "main": [[{"node": "Validate USPTO", "type": "main", "index": 0}]]
     },
     "OpenAlex WEEKLY": {
-      "main": [[{"index": 0, "node": "Read Pillars", "type": "main"}]]
+      "main": [[{"node": "Read Pillars", "type": "main", "index": 0}]]
     },
     "Read Pillars": {
-      "main": [[{"index": 0, "node": "Pillar Keywords2", "type": "main"}]]
+      "main": [[{"node": "Pillar Keywords2", "type": "main", "index": 0}]]
     },
     "Pillar Keywords2": {
-      "main": [[{"index": 0, "node": "OpenAlex HTTP", "type": "main"}]]
+      "main": [[{"node": "OpenAlex HTTP", "type": "main", "index": 0}]]
     },
     "Parse OpenAlex": {
       "main": [[{"index": 0, "node": "Write OpenAlex JSONL", "type": "main"}]]
     },
     "Flatten npm Packages": {
-      "main": [[{"index": 0, "node": "npm HTTP", "type": "main"}]]
+      "main": [[{"node": "npm HTTP", "type": "main", "index": 0}]]
     },
     "npm HTTP": {
-      "main": [[{"index": 0, "node": "Parse npm Stats", "type": "main"}]]
+      "main": [[{"node": "Parse npm Stats", "type": "main", "index": 0}]]
     },
     "Parse npm Stats": {
-      "main": [[{"index": 0, "node": "Write npm JSONL", "type": "main"}]]
+      "main": [[{"node": "Write npm JSONL", "type": "main", "index": 0}]]
     },
     "Write npm JSONL": {
-      "main": [[{"index": 0, "node": "Validate npm", "type": "main"}]]
+      "main": [[{"node": "Validate npm", "type": "main", "index": 0}]]
     },
     "Validate npm": {
-      "main": [[{"index": 4, "node": "Merge Validations", "type": "main"}]]
+      "main": [[{"node": "Merge Validations", "type": "main", "index": 4}]]
     },
     "Validate USPTO": {
       "main": [
-        [{"index": 0, "node": "Databricks1", "type": "main"}],
-        [{"index": 0, "node": "Slack · Approve Upload", "type": "main"}]
+        [{"node": "Databricks1", "type": "main", "index": 0}],
+        [{"node": "Slack · Approve Upload", "type": "main", "index": 0}]
       ]
     },
     "Test": {
-      "main": [[{"index": 0, "node": "Test Error Payload", "type": "main"}]]
+      "main": [[{"node": "Test Error Payload", "type": "main", "index": 0}]]
     },
     "Test Error Payload": {
       "main": [[]]
@@ -720,7 +960,8 @@
     "binaryMode": "separate",
     "timeSavedMode": "fixed",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": true
+    "availableInMCP": true,
+    "timezone": "Africa/Johannesburg"
   },
   "pinData": {},
   "meta": {
@@ -728,8 +969,7 @@
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "versionId": "a3d31039-8393-45e9-bc95-cb3e23c29c1a",
-  "activeVersionId": "a3d31039-8393-45e9-bc95-cb3e23c29c1a",
-  "versionCounter": 470,
-  "triggerCount": 3
+  "active": true,
+  "versionId": "52b6263b-ffcc-4cfa-928f-3bce01c4746b",
+  "versionCounter": 495
 }

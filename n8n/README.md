@@ -154,6 +154,10 @@ There are three, and they are not interchangeable:
 | `Webhook · temp-debug` | path `temp-debug` | currently feeds `Pillar Keywords` — a full-ingest trigger |
 | `Test` | manual | `Test Error Payload` → `Gate` — test leg only |
 
+**Timezone:** the workflow sets `settings.timezone = "Africa/Johannesburg"` (SAST, UTC+2).
+Both crons are evaluated in that zone, not the instance default. Trigger nodes carry no
+per-node override, so the workflow setting is authoritative.
+
 ⚠️ `Webhook · temp-debug` is **live and unauthenticated**. A `GET` to
 `https://n8n.airpg.ai/webhook/temp-debug` runs the whole daily batch. Disconnect it
 or delete it before this workflow is left unattended.
@@ -319,8 +323,9 @@ n8n_get_workflow(id="GQs6702n6vwYjKVa", mode="full")
 Do **not** use `mode: "filtered"` with `includeData`, or `n8n_executions` with
 `mode: "full"` — those return run payloads with megabytes of binary.
 
-Snapshot provenance: `versionCounter` 470, `versionId`
-`a3d31039-8393-45e9-bc95-cb3e23c29c1a`, exported 2026-11-16.
+Snapshot provenance: `versionCounter` 495, `versionId`
+`52b6263b-ffcc-4cfa-928f-3bce01c4746b` (matches `activeVersionId` — published =
+draft, no drift), exported 2026-11-17.
 
 ### Importing it
 
