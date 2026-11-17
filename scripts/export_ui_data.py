@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 
 WAREHOUSE = "557a444c183dfce2"
@@ -43,7 +44,34 @@ def query(sql, tok):
     with urllib.request.urlopen(req, timeout=180) as r:
         res = json.load(r)
 
-    if res.get("status", {}).get("state") != "SUCCEEDED":
+    # A serverless warehouse answers PENDING while it cold-starts, and the
+    # first response is frequently non-terminal even with wait_timeout set.
+    # Re-fetch the SAME statement_id rather than re-submitting the query, or
+    # a cold start looks like a failure -- which it did until this loop existed.
+    statement_id = res.get("statement_id")
+    deadline = time.monotonic() + 300
+    while res.get("status", {}).get("state") in ("PENDING", "RUNNING"):
+        if not statement_id:
+            raise RuntimeError(
+                "statement is not terminal and no statement_id was returned: "
+                + json.dumps(res.get("status"), indent=2)
+            )
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"statement {statement_id} still "
+                f"{res['status']['state']} after 300s"
+            )
+        time.sleep(2)
+        poll = urllib.request.Request(
+            f"{HOST}/api/2.0/sql/statements/{statement_id}",
+            headers={"Authorization": f"Bearer {tok}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(poll, timeout=180) as r:
+            res = json.load(r)
+
+    state = res.get("status", {}).get("state")
+    if state != "SUCCEEDED":
         raise RuntimeError(json.dumps(res.get("status"), indent=2))
 
     schema = (res.get("manifest") or {}).get("schema") or {}

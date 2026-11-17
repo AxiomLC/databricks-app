@@ -42,3 +42,9 @@ ui/public/data/
 
 # Screenshot harness output (ui/.shot.mjs)
 .shots/
+
+# start.ps1 run logs
+logs/
+
+# stray dev server output
+ui/dev-server.log
